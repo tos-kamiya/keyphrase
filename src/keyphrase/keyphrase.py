@@ -33,7 +33,6 @@ def extract_sentences(paragraph: str) -> List[str]:
 
 
 def make_category_prompt(numbered: List[str], category: str) -> str:
-    # 各カテゴリの指示文
     category_instructions = {
         "idea": (
             "Carefully select only the sentence(s) that most directly and specifically describe "
@@ -105,12 +104,15 @@ def detect_heading_indices_with_llm(
 
 
 def get_category_indices(
-    sentences: List[str], category: str, model: str, retries: int = 1, majority_vote: bool = False
+    sentences: List[str],
+    category: str,
+    model: str,
+    retries: int = 1,
+    intersection_vote: bool = False
 ) -> List[int]:
     numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
-    votes: Dict[int, int] = {}
-    n_iter = retries if majority_vote else 1
-    for _ in range(n_iter):
+    result_sets = []
+    for _ in range(retries):
         prompt = make_category_prompt(numbered, category)
         response = ollama.chat(
             model=model,
@@ -119,21 +121,36 @@ def get_category_indices(
         )
         try:
             result = ImportantSentences.model_validate_json(response.message.content)
-            for ln in result.line_numbers:
-                if 1 <= ln <= len(sentences):
-                    votes[ln] = votes.get(ln, 0) + 1
+            # 正規範囲のみに
+            indices = set(ln for ln in result.line_numbers if 1 <= ln <= len(sentences))
+            result_sets.append(indices)
         except Exception as e:
             print(f"parse error for {category}: {e}", file=sys.stderr)
-    if majority_vote:
-        threshold = n_iter // 2 + 1
-        return [idx for idx, count in votes.items() if count >= threshold]
-    return list(votes.keys())
+            result_sets.append(set())
+
+    if intersection_vote and result_sets:
+        # 全ての回で出たもの（積集合）
+        intersection = set.intersection(*result_sets)
+        return sorted(intersection)
+    elif retries > 1:
+        # 多数決（現状の方式が良ければ残す）
+        from collections import Counter
+        all_indices = [ln for indices in result_sets for ln in indices]
+        counter = Counter(all_indices)
+        threshold = retries // 2 + 1
+        return sorted([idx for idx, count in counter.items() if count >= threshold])
+    else:
+        # 1回のみ
+        return sorted(result_sets[0]) if result_sets else []
 
 
-def label_sentences(sentences: List[str], model: str, majority_vote: bool = False) -> List[Optional[str]]:
+def label_sentences(sentences: List[str], model: str, intersection_vote: bool = False, retries: int = 1) -> List[Optional[str]]:
     cat_indices_map = {
         cat: get_category_indices(
-            sentences, cat, model=model, retries=3 if majority_vote else 1, majority_vote=majority_vote
+            sentences, cat,
+            model=model,
+            intersection_vote=intersection_vote,
+            retries=retries,
         )
         for cat in CATEGORY_PRIORITY
     }
@@ -155,7 +172,7 @@ def process_buffered_pdf(
     buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
     headings: List[str],
     model: str,
-    majority_vote: bool,
+    intersection_vote: bool = False, retries: int = 1,
     verbose: bool = False,
 ) -> None:
     # Batch detect headings
@@ -167,9 +184,10 @@ def process_buffered_pdf(
             if verbose:
                 for h in new_h:
                     print(f"[Heading] {h}", file=sys.stderr)
+                print("----------")
             headings.extend(new_h)
     # Batch label and annotate
-    labels = label_sentences(sentences, model, majority_vote)
+    labels = label_sentences(sentences, model, intersection_vote=intersection_vote, retries=retries)
     for (page_idx, sent_idx, sent), cat in zip(buffer, labels):
         if not cat:
             continue
@@ -188,7 +206,7 @@ def highlight_sentences_in_pdf(
     output_pdf_path: str,
     model: str,
     buffer_size: int,
-    majority_vote: bool = False,
+    intersection_vote: bool = False, retries: int = 1,
     verbose: bool = False,
 ) -> None:
     doc = fitz.open(pdf_path)
@@ -203,10 +221,10 @@ def highlight_sentences_in_pdf(
             for idx, sent in enumerate(sentences):
                 buffer.append((page_idx, idx, sent))
             if buffer_len_chars(buffer) >= buffer_size:
-                process_buffered_pdf(doc, buffer, headings, model, majority_vote, verbose)
+                process_buffered_pdf(doc, buffer, headings, model, intersection_vote=intersection_vote, retries=retries, verbose=verbose)
                 buffer.clear()
     if buffer:
-        process_buffered_pdf(doc, buffer, headings, model, majority_vote, verbose)
+        process_buffered_pdf(doc, buffer, headings, model, intersection_vote=intersection_vote, retries=retries, verbose=verbose)
     doc.save(output_pdf_path, garbage=4)
     doc.close()
     print(f"Info: Save the highlighted pdf to: {output_pdf_path}", file=sys.stderr)
@@ -216,7 +234,7 @@ def process_buffered_md(
     buffer: List[Tuple[int, int, str]],  # (para_idx, sent_idx, sentence)
     headings: List[str],
     model: str,
-    majority_vote: bool,
+    intersection_vote: bool = False, retries: int = 1,
     verbose: bool = False,
 ) -> Dict[Tuple[int, int], str]:
     # Batch detect headings
@@ -228,9 +246,10 @@ def process_buffered_md(
             if verbose:
                 for h in new_h:
                     print(f"[Heading] {h}", file=sys.stderr)
+                print("----------")
             headings.extend(new_h)
     # Batch label and collect highlights
-    labels = label_sentences(sentences, model, majority_vote)
+    labels = label_sentences(sentences, model, intersection_vote=intersection_vote, retries=retries)
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
         if cat:
@@ -243,7 +262,7 @@ def highlight_sentences_in_md(
     output_path: Optional[str],
     model: str,
     buffer_size: int,
-    majority_vote: bool = False,
+    intersection_vote: bool = False, retries: int = 1,
     verbose: bool = False,
 ) -> None:
     with open(md_path, "r", encoding="utf-8") as f:
@@ -259,11 +278,11 @@ def highlight_sentences_in_md(
         for s_idx, sent in enumerate(sentences):
             buffer.append((p_idx, s_idx, sent))
         if buffer_len_chars(buffer) >= buffer_size:
-            batch_highlights = process_buffered_md(buffer, headings, model, majority_vote, verbose)
+            batch_highlights = process_buffered_md(buffer, headings, model, intersection_vote=intersection_vote, retries=retries, verbose=verbose)
             highlighted.update(batch_highlights)
             buffer.clear()
     if buffer:
-        highlighted.update(process_buffered_md(buffer, headings, model, majority_vote, verbose))
+        highlighted.update(process_buffered_md(buffer, headings, model, intersection_vote=intersection_vote, retries=retries, verbose=verbose))
 
     # Reconstruct with highlights
     highlighted_paragraphs: List[str] = []
@@ -296,7 +315,15 @@ def get_output_path(
         out_path = f"{base}{suffix}{ext}"
     else:
         out_path = f"out{ext}"
-    if not overwrite and os.path.exists(out_path):
+
+    always_overwrite = {"out.md", "out.pdf"}
+    filename_only = os.path.basename(out_path).lower()
+
+    if (
+        not overwrite
+        and os.path.exists(out_path)
+        and filename_only not in always_overwrite
+    ):
         print(f"Error: output file already exists: {out_path}", file=sys.stderr)
         sys.exit(1)
     return out_path
@@ -330,7 +357,8 @@ def main() -> None:
         "-m", "--model", type=str, default="qwen3:30b", help="LLM for identify key sentences (default: 'qwen3:30b')."
     )
     parser.add_argument(
-        "-3", "--majority-vote", action="store_true", help="Use majority voting (3 times per category per paragraph)"
+        "-i", "--intersection-vote", type=int, metavar="N", default=3,
+        help="Run LLM N times and only keep indices detected in ALL runs (intersection voting) (default: 3)."
     )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
     args = parser.parse_args()
@@ -353,7 +381,7 @@ def main() -> None:
             output_path,
             model=args.model,
             buffer_size=args.buffer_size,
-            majority_vote=args.majority_vote,
+            intersection_vote=args.intersection_vote > 0, retries=args.intersection_vote,
             verbose=args.verbose,
         )
     elif filetype == "md":
@@ -362,7 +390,7 @@ def main() -> None:
             output_path,
             model=args.model,
             buffer_size=args.buffer_size,
-            majority_vote=args.majority_vote,
+            intersection_vote=args.intersection_vote > 0, retries=args.intersection_vote,
             verbose=args.verbose,
         )
     else:
