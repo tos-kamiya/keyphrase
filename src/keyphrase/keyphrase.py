@@ -2,7 +2,7 @@ import argparse
 import os
 import re
 import sys
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from tqdm import tqdm
 
 import fitz  # PyMuPDF
@@ -22,6 +22,9 @@ MD_COLOR_MAP = {
     "threat": "#f7e158",     # yellow
 }
 
+# Buffer size threshold for batch processing
+BUFFER_SENTENCE_COUNT = 50
+
 class ImportantSentences(BaseModel):
     line_numbers: List[int]
 
@@ -39,7 +42,7 @@ def make_category_prompt(
     category_instructions = {
         "idea": (
             "Carefully select only the sentence(s) that most directly and specifically describe "
-            "the main idea, method, or proposal of the paper in this paragraph."
+            "the main motivations, ideas, approaches of the paper."
         ),
         "experiment": (
             "Carefully select only the sentence(s) that most directly and specifically summarize "
@@ -47,7 +50,7 @@ def make_category_prompt(
         ),
         "threat": (
             "Carefully select only the sentence(s) that mention possible threats to validity, limitations, "
-            "weaknesses, failure cases, or situations where the proposed method might not work well. "
+            "weaknesses, failure cases. "
             "This includes concerns about generalization, data quality, experimental design, "
             "and any risks or uncertainties in the effectiveness of the method."
         ),
@@ -56,18 +59,17 @@ def make_category_prompt(
         raise ValueError(f"Unknown category: {category}")
     core_instruction = category_instructions[category]
     shared_tail = (
-        " In most cases, there should be at most one, sometimes zero, such sentence(s)."
-        " If none apply, return an empty list."
-        " Return a JSON object with a key 'line_numbers', listing only the number(s) of the most directly relevant sentence(s)."
-        " Do NOT select sentences about author names, URLs, publication info, acknowledgments, references, or general metadata."
-        " Return only the JSON object, nothing else.\n\n"
+        "In most cases, there should be at most one, sometimes zero, such sentence(s).  "
+        "If none apply, return an empty list.\n"
+        "Return a JSON object with a key 'line_numbers', listing only the number(s) of the most directly relevant sentence(s). "
+        "Do NOT select sentences about author names, URLs, publication info, acknowledgments, references, or general metadata. "
+        "Return only the JSON object, nothing else.\n\n"
     )
-    prompt = (
+    return (
         "Below are numbered sentences from a scientific paper paragraph. "
-        f"{core_instruction}{shared_tail}"
+        f"{core_instruction}\n{shared_tail}"
         + "\n".join(numbered)
     )
-    return prompt
 
 
 def should_extract_headings(num_lines: int, num_heading_lines: int) -> bool:
@@ -119,16 +121,70 @@ def get_category_indices(
         )
         try:
             result = ImportantSentences.model_validate_json(response.message.content)
-            line_numbers = [i for i in result.line_numbers if 1 <= i <= len(sentences)]
-            for ln in line_numbers:
-                votes[ln] = votes.get(ln, 0) + 1
+            for ln in result.line_numbers:
+                if 1 <= ln <= len(sentences):
+                    votes[ln] = votes.get(ln, 0) + 1
         except Exception as e:
             print(f"parse error for {category}: {e}", file=sys.stderr)
     if majority_vote:
         threshold = n_iter // 2 + 1
         return [idx for idx, count in votes.items() if count >= threshold]
-    else:
-        return list(votes.keys())
+    return list(votes.keys())
+
+
+def label_sentences(
+    sentences: List[str],
+    model: str,
+    majority_vote: bool = False
+) -> List[Optional[str]]:
+    cat_indices_map = {
+        cat: get_category_indices(
+            sentences, cat,
+            model=model,
+            retries=3 if majority_vote else 1,
+            majority_vote=majority_vote
+        ) for cat in CATEGORY_PRIORITY
+    }
+    labeled: List[Optional[str]] = [None] * len(sentences)
+    for cat in CATEGORY_PRIORITY:
+        for idx in cat_indices_map[cat]:
+            orig_idx = idx - 1
+            if labeled[orig_idx] is None:
+                labeled[orig_idx] = cat
+    return labeled
+
+
+def process_buffered_pdf(
+    doc,
+    buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
+    headings: List[str],
+    model: str,
+    majority_vote: bool,
+    verbose: bool = False
+) -> None:
+    # Batch detect headings
+    sentences = [item[2] for item in buffer]
+    heading_idxs = detect_heading_indices_with_llm(sentences, model)
+    if should_extract_headings(len(sentences), len(heading_idxs)):
+        new_h = [sentences[i-1] for i in heading_idxs]
+        if new_h:
+            if verbose:
+                for h in new_h:
+                    print(f"[Heading] {h}", file=sys.stderr)
+            headings.extend(new_h)
+    # Batch label and annotate
+    labels = label_sentences(sentences, model, majority_vote)
+    for (page_idx, sent_idx, sent), cat in zip(buffer, labels):
+        if not cat:
+            continue
+        page = doc[page_idx]
+        text = sent.replace("。", "")
+        for quads in page.search_for(text):
+            highlight = page.add_highlight_annot(quads)
+            r, g, b = COLOR_MAP[cat]
+            highlight.set_colors({"stroke": (r, g, b)})
+            highlight.set_opacity(0.5)
+            highlight.update()
 
 
 def highlight_sentences_in_pdf(
@@ -139,6 +195,7 @@ def highlight_sentences_in_pdf(
     verbose: bool = False,
 ) -> None:
     doc = fitz.open(pdf_path)
+    buffer: List[Tuple[int, int, str]] = []
     headings: List[str] = []
 
     for page_idx, page in enumerate(doc):
@@ -146,43 +203,42 @@ def highlight_sentences_in_pdf(
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
         for para in paragraphs:
             sentences = extract_sentences(para)
-            if not sentences:
-                continue
-            heading_line_numbers = detect_heading_indices_with_llm(sentences, model)
-            num_lines = len(sentences)
-            num_heading_lines = len(heading_line_numbers)
-            if should_extract_headings(num_lines, num_heading_lines):
-                new_headings = [sentences[i-1] for i in heading_line_numbers]
-                if new_headings:
-                    if verbose:
-                        for h in new_headings:
-                            print(f"[Heading] {h}", file=sys.stderr)
-                    headings.extend(new_headings)
-            cat_indices_map = {
-                cat: get_category_indices(
-                    sentences, cat, model=model,
-                    retries=3 if majority_vote else 1,
-                    majority_vote=majority_vote
-                ) for cat in CATEGORY_PRIORITY
-            }
-            labeled: List[Optional[str]] = [None] * len(sentences)
-            for cat in CATEGORY_PRIORITY:
-                for idx in cat_indices_map[cat]:
-                    orig_idx = idx - 1
-                    if labeled[orig_idx] is None:
-                        labeled[orig_idx] = cat
-            for idx, cat in enumerate(labeled):
-                if cat is None:
-                    continue
-                sent = sentences[idx].replace("。", "")
-                for inst in page.search_for(sent):
-                    annot = page.add_rect_annot(inst)
-                    annot.set_colors(stroke=None, fill=COLOR_MAP[cat])
-                    annot.set_opacity(0.5)
-                    annot.update()
+            for idx, sent in enumerate(sentences):
+                buffer.append((page_idx, idx, sent))
+            if len(buffer) >= BUFFER_SENTENCE_COUNT:
+                process_buffered_pdf(doc, buffer, headings, model, majority_vote, verbose)
+                buffer.clear()
+    if buffer:
+        process_buffered_pdf(doc, buffer, headings, model, majority_vote, verbose)
     doc.save(output_pdf_path, garbage=4)
     doc.close()
     print(f"Info: Save the highlighted pdf to: {output_pdf_path}", file=sys.stderr)
+
+
+def process_buffered_md(
+    buffer: List[Tuple[int, int, str]],  # (para_idx, sent_idx, sentence)
+    headings: List[str],
+    model: str,
+    majority_vote: bool,
+    verbose: bool = False
+) -> Dict[Tuple[int, int], str]:
+    # Batch detect headings
+    sentences = [item[2] for item in buffer]
+    heading_idxs = detect_heading_indices_with_llm(sentences, model)
+    if should_extract_headings(len(sentences), len(heading_idxs)):
+        new_h = [sentences[i-1] for i in heading_idxs]
+        if new_h:
+            if verbose:
+                for h in new_h:
+                    print(f"[Heading] {h}", file=sys.stderr)
+            headings.extend(new_h)
+    # Batch label and collect highlights
+    labels = label_sentences(sentences, model, majority_vote)
+    highlights: Dict[Tuple[int, int], str] = {}
+    for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
+        if cat:
+            highlights[(para_idx, sent_idx)] = f'<span style="background-color:{MD_COLOR_MAP[cat]}">{sent}</span>'
+    return highlights
 
 
 def highlight_sentences_in_md(
@@ -196,48 +252,31 @@ def highlight_sentences_in_md(
         content = f.read()
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", content) if p.strip()]
 
+    buffer: List[Tuple[int, int, str]] = []
     headings: List[str] = []
-    highlighted_paragraphs: List[str] = []
-    for para in paragraphs:
-        sentences = extract_sentences(para)
-        if not sentences:
-            highlighted_paragraphs.append(para)
-            continue
-        heading_indices = detect_heading_indices_with_llm(sentences, model)
-        num_lines = len(sentences)
-        num_heading_lines = len(heading_indices)
-        if should_extract_headings(num_lines, num_heading_lines):
-            new_headings = [sentences[i-1] for i in heading_indices]
-            if new_headings:
-                if verbose:
-                    for h in new_headings:
-                        print(f"[Heading] {h}", file=sys.stderr)
-                headings.extend(new_headings)
-        cat_indices_map = {
-            cat: get_category_indices(
-                sentences, cat, model=model,
-                retries=3 if majority_vote else 1,
-                majority_vote=majority_vote
-            ) for cat in CATEGORY_PRIORITY
-        }
-        labeled: List[Optional[str]] = [None] * len(sentences)
-        for cat in CATEGORY_PRIORITY:
-            for idx in cat_indices_map[cat]:
-                orig_idx = idx - 1
-                if labeled[orig_idx] is None:
-                    labeled[orig_idx] = cat
-        new_sents: List[str] = []
-        for idx, sent in enumerate(sentences):
-            cat = labeled[idx]
-            if cat is None:
-                new_sents.append(sent)
-            else:
-                color = MD_COLOR_MAP[cat]
-                new_sents.append(f'<span style="background-color:{color}">{sent}</span>')
-        para_highlighted = "".join(new_sents)
-        highlighted_paragraphs.append(para_highlighted)
+    highlighted: Dict[Tuple[int, int], str] = {}
 
-    out_text = "\n".join(highlighted_paragraphs)
+    for p_idx, para in enumerate(paragraphs):
+        sentences = extract_sentences(para)
+        for s_idx, sent in enumerate(sentences):
+            buffer.append((p_idx, s_idx, sent))
+        if len(buffer) >= BUFFER_SENTENCE_COUNT:
+            batch_highlights = process_buffered_md(buffer, headings, model, majority_vote, verbose)
+            highlighted.update(batch_highlights)
+            buffer.clear()
+    if buffer:
+        highlighted.update(process_buffered_md(buffer, headings, model, majority_vote, verbose))
+
+    # Reconstruct with highlights
+    highlighted_paragraphs: List[str] = []
+    for p_idx, para in enumerate(paragraphs):
+        sentences = extract_sentences(para)
+        new_sents: List[str] = []
+        for s_idx, sent in enumerate(sentences):
+            new_sents.append(highlighted.get((p_idx, s_idx), sent))
+        highlighted_paragraphs.append("".join(new_sents))
+
+    out_text = "\n\n".join(highlighted_paragraphs)
     if output_path is None:
         print(out_text)
     else:
@@ -286,7 +325,7 @@ def main() -> None:
     group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md)")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
     parser.add_argument("-m", "--model", type=str, default="qwen3:30b", help="LLM for identify key sentences (default: 'qwen3:30b').")
-    parser.add_argument("--majority-vote", action="store_true", help="Use majority voting (3 times per category per paragraph)")
+    parser.add_argument("-3", "--majority-vote", action="store_true", help="Use majority voting (3 times per category per paragraph)")
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
     args = parser.parse_args()
 
