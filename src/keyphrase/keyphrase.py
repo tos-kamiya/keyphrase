@@ -2,8 +2,7 @@ import argparse
 import os
 import re
 import sys
-from typing import List, Dict, Any, Optional, Tuple
-from tqdm import tqdm
+from typing import List, Dict, Optional, Tuple
 
 import fitz  # PyMuPDF
 import blingfire
@@ -12,15 +11,16 @@ from pydantic import BaseModel
 
 CATEGORY_PRIORITY = ["threat", "experiment", "idea"]
 COLOR_MAP = {
-    "idea": (0, 0.5, 1),    # blue
-    "experiment": (0, 1, 0),# green
-    "threat": (1, 1, 0),    # yellow
+    "idea": (0, 0.5, 1),  # blue
+    "experiment": (0, 1, 0),  # green
+    "threat": (1, 1, 0),  # yellow
 }
 MD_COLOR_MAP = {
-    "idea": "#3498db",       # blue
-    "experiment": "#27ae60", # green
-    "threat": "#f7e158",     # yellow
+    "idea": "#3498db",  # blue
+    "experiment": "#27ae60",  # green
+    "threat": "#f7e158",  # yellow
 }
+
 
 class ImportantSentences(BaseModel):
     line_numbers: List[int]
@@ -32,10 +32,7 @@ def extract_sentences(paragraph: str) -> List[str]:
     return [s.strip() for s in sents_text.split("\n") if s.strip()]
 
 
-def make_category_prompt(
-    numbered: List[str],
-    category: str
-) -> str:
+def make_category_prompt(numbered: List[str], category: str) -> str:
     # 各カテゴリの指示文
     category_instructions = {
         "idea": (
@@ -73,8 +70,7 @@ def make_category_prompt(
     )
     return (
         "Below are numbered sentences from a scientific paper paragraph.\n"
-        f"{core_instruction}\n{shared_tail}"
-        + "\n".join(numbered)
+        f"{core_instruction}\n{shared_tail}" + "\n".join(numbered)
     )
 
 
@@ -109,11 +105,7 @@ def detect_heading_indices_with_llm(
 
 
 def get_category_indices(
-    sentences: List[str],
-    category: str,
-    model: str,
-    retries: int = 1,
-    majority_vote: bool = False
+    sentences: List[str], category: str, model: str, retries: int = 1, majority_vote: bool = False
 ) -> List[int]:
     numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
     votes: Dict[int, int] = {}
@@ -138,18 +130,12 @@ def get_category_indices(
     return list(votes.keys())
 
 
-def label_sentences(
-    sentences: List[str],
-    model: str,
-    majority_vote: bool = False
-) -> List[Optional[str]]:
+def label_sentences(sentences: List[str], model: str, majority_vote: bool = False) -> List[Optional[str]]:
     cat_indices_map = {
         cat: get_category_indices(
-            sentences, cat,
-            model=model,
-            retries=3 if majority_vote else 1,
-            majority_vote=majority_vote
-        ) for cat in CATEGORY_PRIORITY
+            sentences, cat, model=model, retries=3 if majority_vote else 1, majority_vote=majority_vote
+        )
+        for cat in CATEGORY_PRIORITY
     }
     labeled: List[Optional[str]] = [None] * len(sentences)
     for cat in CATEGORY_PRIORITY:
@@ -170,13 +156,13 @@ def process_buffered_pdf(
     headings: List[str],
     model: str,
     majority_vote: bool,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> None:
     # Batch detect headings
     sentences = [item[2] for item in buffer]
     heading_idxs = detect_heading_indices_with_llm(sentences, model)
     if should_extract_headings(len(sentences), len(heading_idxs)):
-        new_h = [sentences[i-1] for i in heading_idxs]
+        new_h = [sentences[i - 1] for i in heading_idxs]
         if new_h:
             if verbose:
                 for h in new_h:
@@ -231,13 +217,13 @@ def process_buffered_md(
     headings: List[str],
     model: str,
     majority_vote: bool,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> Dict[Tuple[int, int], str]:
     # Batch detect headings
     sentences = [item[2] for item in buffer]
     heading_idxs = detect_heading_indices_with_llm(sentences, model)
     if should_extract_headings(len(sentences), len(heading_idxs)):
-        new_h = [sentences[i-1] for i in heading_idxs]
+        new_h = [sentences[i - 1] for i in heading_idxs]
         if new_h:
             if verbose:
                 for h in new_h:
@@ -298,11 +284,7 @@ def highlight_sentences_in_md(
 
 
 def get_output_path(
-    input_path: str,
-    output: Optional[str],
-    output_auto: bool,
-    suffix: str = "-annotated",
-    overwrite: bool = False
+    input_path: str, output: Optional[str], output_auto: bool, suffix: str = "-annotated", overwrite: bool = False
 ) -> Optional[str]:
     if output == "-":
         return None
@@ -330,31 +312,41 @@ def detect_filetype(path: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Highlight key sentences in PDF or Markdown (AI-based color coding, heading-aware)")
+    parser = argparse.ArgumentParser(
+        description="Highlight key sentences in PDF or Markdown (AI-based color coding, heading-aware)"
+    )
     parser.add_argument("input", help="input PDF or Markdown file")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-o", "--output", help="Output file")
     group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md)")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
     parser.add_argument(
-        "--buffer-size", type=int, default=2000,
-        help="Buffer size threshold for batch processing (measured in characters, default: 2000)"
+        "--buffer-size",
+        type=int,
+        default=2000,
+        help="Buffer size threshold for batch processing (measured in characters, default: 2000)",
     )
-    parser.add_argument("-m", "--model", type=str, default="qwen3:30b", help="LLM for identify key sentences (default: 'qwen3:30b').")
-    parser.add_argument("-3", "--majority-vote", action="store_true", help="Use majority voting (3 times per category per paragraph)")
+    parser.add_argument(
+        "-m", "--model", type=str, default="qwen3:30b", help="LLM for identify key sentences (default: 'qwen3:30b')."
+    )
+    parser.add_argument(
+        "-3", "--majority-vote", action="store_true", help="Use majority voting (3 times per category per paragraph)"
+    )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
     args = parser.parse_args()
 
     input_path: str = args.input
     filetype: str = detect_filetype(input_path)
     output_path: Optional[str] = get_output_path(
-        input_path, args.output, args.output_auto,
-        suffix="-annotated", overwrite=args.overwrite
+        input_path, args.output, args.output_auto, suffix="-annotated", overwrite=args.overwrite
     )
 
     if filetype == "pdf":
         if output_path is None:
-            print("Error: Output to standard output ('-o -') is not supported for PDF files. Use '-o OUTPUT.pdf'.", file=sys.stderr)
+            print(
+                "Error: Output to standard output ('-o -') is not supported for PDF files. Use '-o OUTPUT.pdf'.",
+                file=sys.stderr,
+            )
             sys.exit(1)
         highlight_sentences_in_pdf(
             input_path,
@@ -362,7 +354,7 @@ def main() -> None:
             model=args.model,
             buffer_size=args.buffer_size,
             majority_vote=args.majority_vote,
-            verbose=args.verbose
+            verbose=args.verbose,
         )
     elif filetype == "md":
         highlight_sentences_in_md(
@@ -371,11 +363,12 @@ def main() -> None:
             model=args.model,
             buffer_size=args.buffer_size,
             majority_vote=args.majority_vote,
-            verbose=args.verbose
+            verbose=args.verbose,
         )
     else:
         print("Unknown file type", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
