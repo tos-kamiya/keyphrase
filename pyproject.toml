@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "keyphrase"
+dynamic = ["version"]
+description = 'Detects key phrases and important sentences in PDF or Markdown files'
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Toshihiro Kamiya", email = "kamiya@mbj.nifty.com" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "blingfire",
+  "numpy",
+  "pymupdf",
+  "ollama",
+  "tqdm",
+]
+
+[tool.hatch.version]
+path = "src/keyphrase/__about__.py"
+
+[project.gui-scripts]
+keyphrase = "keyphrase:main"
