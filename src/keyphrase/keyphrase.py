@@ -22,9 +22,6 @@ MD_COLOR_MAP = {
     "threat": "#f7e158",     # yellow
 }
 
-# Buffer size threshold for batch processing
-BUFFER_SENTENCE_COUNT = 50
-
 class ImportantSentences(BaseModel):
     line_numbers: List[int]
 
@@ -163,6 +160,10 @@ def label_sentences(
     return labeled
 
 
+def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
+    return sum(len(sent) for (_, _, sent) in buffer)
+
+
 def process_buffered_pdf(
     doc,
     buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
@@ -200,6 +201,7 @@ def highlight_sentences_in_pdf(
     pdf_path: str,
     output_pdf_path: str,
     model: str,
+    buffer_size: int,
     majority_vote: bool = False,
     verbose: bool = False,
 ) -> None:
@@ -214,7 +216,7 @@ def highlight_sentences_in_pdf(
             sentences = extract_sentences(para)
             for idx, sent in enumerate(sentences):
                 buffer.append((page_idx, idx, sent))
-            if len(buffer) >= BUFFER_SENTENCE_COUNT:
+            if buffer_len_chars(buffer) >= buffer_size:
                 process_buffered_pdf(doc, buffer, headings, model, majority_vote, verbose)
                 buffer.clear()
     if buffer:
@@ -254,6 +256,7 @@ def highlight_sentences_in_md(
     md_path: str,
     output_path: Optional[str],
     model: str,
+    buffer_size: int,
     majority_vote: bool = False,
     verbose: bool = False,
 ) -> None:
@@ -269,7 +272,7 @@ def highlight_sentences_in_md(
         sentences = extract_sentences(para)
         for s_idx, sent in enumerate(sentences):
             buffer.append((p_idx, s_idx, sent))
-        if len(buffer) >= BUFFER_SENTENCE_COUNT:
+        if buffer_len_chars(buffer) >= buffer_size:
             batch_highlights = process_buffered_md(buffer, headings, model, majority_vote, verbose)
             highlighted.update(batch_highlights)
             buffer.clear()
@@ -333,6 +336,10 @@ def main() -> None:
     group.add_argument("-o", "--output", help="Output file")
     group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md)")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
+    parser.add_argument(
+        "--buffer-size", type=int, default=2000,
+        help="Buffer size threshold for batch processing (measured in characters, default: 2000)"
+    )
     parser.add_argument("-m", "--model", type=str, default="qwen3:30b", help="LLM for identify key sentences (default: 'qwen3:30b').")
     parser.add_argument("-3", "--majority-vote", action="store_true", help="Use majority voting (3 times per category per paragraph)")
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
@@ -353,6 +360,7 @@ def main() -> None:
             input_path,
             output_path,
             model=args.model,
+            buffer_size=args.buffer_size,
             majority_vote=args.majority_vote,
             verbose=args.verbose
         )
@@ -361,6 +369,7 @@ def main() -> None:
             input_path,
             output_path,
             model=args.model,
+            buffer_size=args.buffer_size,
             majority_vote=args.majority_vote,
             verbose=args.verbose
         )
