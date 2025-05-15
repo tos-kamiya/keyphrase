@@ -22,26 +22,16 @@ MD_COLOR_MAP = {
     "threat": "#f7e158",     # yellow
 }
 
-class ImportantSentenceIndices(BaseModel):
-    indices: List[int]
+class Headdings(BaseModel):
+    line_numbers: List[int]
+
+class ImportantSentences(BaseModel):
+    line_numbers: List[int]
 
 def extract_sentences(paragraph: str) -> List[str]:
     normalized = paragraph.replace("．", "。")
     sents_text = blingfire.text_to_sentences(normalized)
     return [s.strip() for s in sents_text.split("\n") if s.strip()]
-
-def should_extract_headings(num_lines: int, num_heading_lines: int) -> bool:
-    return not (num_lines >= 10 and num_heading_lines / num_lines >= 0.5)
-
-def make_heading_prompt(numbered: List[str]) -> str:
-    instruction = (
-        "From the numbered sentences below, select only those that are likely to be section headings, "
-        "titles, or subsection titles. If none apply, return an empty list. "
-        "Return a JSON object with a key 'indices', listing only the number(s) of heading-like sentences. "
-        "Do NOT select sentences that are part of the body text or typical content. "
-        "Return only the JSON object, nothing else.\n\n"
-    )
-    return instruction + "\n".join(numbered)
 
 def make_category_prompt(
     numbered: List[str],
@@ -70,7 +60,7 @@ def make_category_prompt(
     shared_tail = (
         " In most cases, there should be at most one, sometimes zero, such sentence(s)."
         " If none apply, return an empty list."
-        " Return a JSON object with a key 'indices', listing only the number(s) of the most directly relevant sentence(s)."
+        " Return a JSON object with a key 'line_numbers', listing only the number(s) of the most directly relevant sentence(s)."
         " Do NOT select sentences about author names, URLs, publication info, acknowledgments, references, or general metadata."
         " Return only the JSON object, nothing else.\n\n"
     )
@@ -85,21 +75,32 @@ def make_category_prompt(
     )
     return prompt
 
-def detect_heading_indices(
+def should_extract_headings(num_lines: int, num_heading_lines: int) -> bool:
+    return not (num_lines >= 10 and num_heading_lines / num_lines >= 0.5)
+
+def make_heading_prompt(numbered: List[str]) -> str:
+    instruction = (
+        "From the sentence with line numbers below, select only those that are likely to be section headings, "
+        "titles, or subsection titles. If none apply, return an empty list. "
+        "Return a JSON object with a key 'line_numbers', listing only the number(s) of heading-like sentences. "
+        "Do NOT select sentences that are part of the body text or typical content. "
+        "Return only the JSON object, nothing else.\n\n"
+    )
+    return instruction + "\n".join(numbered)
+
+def detect_heading_indices_with_llm(
     sentences: List[str],
     model: str,
-    pbar: Optional[tqdm] = None
 ) -> List[int]:
-    numbered = [f"{i+1}. {s}" for i, s in enumerate(sentences)]
+    numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
     prompt = make_heading_prompt(numbered)
     response = ollama.chat(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        format=ImportantSentenceIndices.model_json_schema(),
+        format=Headdings.model_json_schema(),
     )
-    result = ImportantSentenceIndices.model_validate_json(response.message.content)
-    if pbar: pbar.update(1)
-    return [i for i in result.indices if 1 <= i <= len(sentences)]
+    result = Headdings.model_validate_json(response.message.content)
+    return [i for i in result.line_numbers if 1 <= i <= len(sentences)]
 
 def get_category_indices(
     sentences: List[str],
@@ -107,10 +108,9 @@ def get_category_indices(
     model: str,
     retries: int = 1,
     majority_vote: bool = False,
-    pbar: Optional[tqdm] = None,
     headings: Optional[List[str]] = None
 ) -> List[int]:
-    numbered = [f"{i+1}. {s}" for i, s in enumerate(sentences)]
+    numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
     votes: Dict[int, int] = {}
     n_iter = retries if majority_vote else 1
     for _ in range(n_iter):
@@ -118,72 +118,74 @@ def get_category_indices(
         response = ollama.chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            format=ImportantSentenceIndices.model_json_schema(),
+            format=ImportantSentences.model_json_schema(),
         )
         try:
-            result = ImportantSentenceIndices.model_validate_json(response.message.content)
-            indices = [i for i in result.indices if 1 <= i <= len(sentences)]
-            for idx in indices:
-                votes[idx] = votes.get(idx, 0) + 1
+            result = ImportantSentences.model_validate_json(response.message.content)
+            line_numbers = [i for i in result.line_numbers if 1 <= i <= len(sentences)]
+            for ln in line_numbers:
+                votes[ln] = votes.get(ln, 0) + 1
         except Exception as e:
             print(f"parse error for {category}: {e}", file=sys.stderr)
-        if pbar:
-            pbar.update(1)
     if majority_vote:
         threshold = n_iter // 2 + 1
         return [idx for idx, count in votes.items() if count >= threshold]
     else:
         return list(votes.keys())
 
-def extract_paragraphs_from_pdf(pdf_path: str) -> List[List[str]]:
-    """
-    Extract paragraphs (split by double newlines) for each page in the PDF.
-    Returns: List of pages, each page is a list of paragraph strings.
-    """
-    doc = fitz.open(pdf_path)
-    all_page_paragraphs = []
-    for page in doc:
-        page_text = page.get_text()
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
-        all_page_paragraphs.append(paragraphs)
-    return all_page_paragraphs
-
 def highlight_sentences_in_pdf(
     pdf_path: str,
     output_pdf_path: str,
-    all_page_paragraphs: List[List[str]],
     model: str,
     majority_vote: bool = False,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> None:
+    """
+    Highlight important sentences in a PDF using LLM judgments, with heading extraction and filtering.
+    PDF is loaded only once.
+    """
     doc = fitz.open(pdf_path)
-    total = sum(len(paras) for paras in all_page_paragraphs) * (len(CATEGORY_PRIORITY) + 1) * (3 if majority_vote else 1)
-    pbar = tqdm(total=total, desc="Highlighting", disable=not verbose)
     headings: List[str] = []
-    for page_idx, paragraphs in enumerate(all_page_paragraphs):
-        page = doc[page_idx]
+
+    for page_idx, page in enumerate(doc):
+        # 段落抽出（ダブル改行で分割）
+        page_text = page.get_text()
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
         for para in paragraphs:
             sentences = extract_sentences(para)
             if not sentences:
-                pbar.update(len(CATEGORY_PRIORITY) * (3 if majority_vote else 1) + 1)
                 continue
-            heading_indices = detect_heading_indices(sentences, model, pbar=pbar)
+
+            # 見出し判定
+            heading_line_numbers = detect_heading_indices_with_llm(sentences, model)
             num_lines = len(sentences)
-            num_heading_lines = len(heading_indices)
+            num_heading_lines = len(heading_line_numbers)
+
+            # フィルタ条件
             if should_extract_headings(num_lines, num_heading_lines):
-                new_headings = [sentences[i-1] for i in heading_indices]
-                headings.extend(new_headings)
-            cat_indices = {
+                new_headings = [sentences[i-1] for i in heading_line_numbers]
+                if new_headings:
+                    if verbose:
+                        for h in new_headings:
+                            print(f"[Heading] {h}", file=sys.stderr)
+                    headings.extend(new_headings)
+
+            # キーフレーズ抽出
+            cat_indices_map = {
                 cat: get_category_indices(
                     sentences, cat, model=model, retries=3 if majority_vote else 1,
-                    majority_vote=majority_vote, pbar=pbar, headings=headings
+                    majority_vote=majority_vote, headings=headings
                 ) for cat in CATEGORY_PRIORITY
             }
+
             labeled: List[Optional[str]] = [None] * len(sentences)
             for cat in CATEGORY_PRIORITY:
-                for idx in cat_indices[cat]:
-                    if labeled[idx - 1] is None:
-                        labeled[idx - 1] = cat
+                for idx in cat_indices_map[cat]:
+                    orig_idx = idx - 1
+                    if labeled[orig_idx] is None:
+                        labeled[orig_idx] = cat
+
+            # ハイライト
             for idx, cat in enumerate(labeled):
                 if cat is None:
                     continue
@@ -193,48 +195,67 @@ def highlight_sentences_in_pdf(
                     annot.set_colors(stroke=None, fill=COLOR_MAP[cat])
                     annot.set_opacity(0.5)
                     annot.update()
-    pbar.close()
     doc.save(output_pdf_path, garbage=4)
     doc.close()
     print(f"Info: Save the highlighted pdf to: {output_pdf_path}", file=sys.stderr)
+
 
 def highlight_sentences_in_md(
     md_path: str,
     output_path: Optional[str],
     model: str,
     majority_vote: bool = False,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> None:
     with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", content) if p.strip()]
-    total = len(paragraphs) * (len(CATEGORY_PRIORITY) + 1) * (3 if majority_vote else 1)
-    pbar = tqdm(total=total, desc="Highlighting", disable=not verbose)
+
     headings: List[str] = []
     highlighted_paragraphs: List[str] = []
     for para in paragraphs:
         sentences = extract_sentences(para)
         if not sentences:
             highlighted_paragraphs.append(para)
-            pbar.update(len(CATEGORY_PRIORITY) * (3 if majority_vote else 1) + 1)
             continue
-        heading_indices = detect_heading_indices(sentences, model, pbar=pbar)
+
+        # 1. Heading detection
+        heading_indices = detect_heading_indices_with_llm(sentences, model)
         num_lines = len(sentences)
         num_heading_lines = len(heading_indices)
+
+        # 2. フィルタ
         if should_extract_headings(num_lines, num_heading_lines):
             new_headings = [sentences[i-1] for i in heading_indices]
-            headings.extend(new_headings)
-        cat_indices = {
+            if new_headings:
+                if verbose:
+                    for h in new_headings:
+                        print(f"[Heading] {h}", file=sys.stderr)
+                headings.extend(new_headings)
+
+        # 3. キーフレーズ抽出（heading_indicesは必ず除外）
+        # heading_indicesは1-indexedなので、0-indexedのsetに変換
+        skip_set = set(idx - 1 for idx in heading_indices)
+        filtered_sentences = [s for i, s in enumerate(sentences) if i not in skip_set]
+
+        # filtered_sentencesのインデックスを元のsentencesのインデックスに変換するマップを作る
+        idx_map = [i for i in range(len(sentences)) if i not in skip_set]
+
+        cat_indices_map = {
             cat: get_category_indices(
-                sentences, cat, model=model, retries=3 if majority_vote else 1,
-                majority_vote=majority_vote, pbar=pbar, headings=headings
+                filtered_sentences, cat, model=model, retries=3 if majority_vote else 1,
+                majority_vote=majority_vote, headings=headings
             ) for cat in CATEGORY_PRIORITY
         }
+
+        # ラベル付け
         labeled: List[Optional[str]] = [None] * len(sentences)
         for cat in CATEGORY_PRIORITY:
-            for idx in cat_indices[cat]:
-                if labeled[idx - 1] is None:
-                    labeled[idx - 1] = cat
+            for idx in cat_indices_map[cat]:
+                orig_idx = idx_map[idx - 1]
+                if labeled[orig_idx] is None:
+                    labeled[orig_idx] = cat
+
         new_sents: List[str] = []
         for idx, sent in enumerate(sentences):
             cat = labeled[idx]
@@ -245,7 +266,7 @@ def highlight_sentences_in_md(
                 new_sents.append(f'<span style="background-color:{color}">{sent}</span>')
         para_highlighted = "".join(new_sents)
         highlighted_paragraphs.append(para_highlighted)
-    pbar.close()
+
     out_text = "\n\n".join(highlighted_paragraphs)
     if output_path is None:
         print(out_text)
@@ -253,6 +274,7 @@ def highlight_sentences_in_md(
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(out_text)
         print(f"Info: Save the highlighted markdown to: {output_path}", file=sys.stderr)
+
 
 def get_output_path(
     input_path: str,
@@ -307,11 +329,9 @@ def main() -> None:
         if output_path is None:
             print("Error: Output to standard output ('-o -') is not supported for PDF files. Use '-o OUTPUT.pdf'.", file=sys.stderr)
             sys.exit(1)
-        all_page_paragraphs: List[List[str]] = extract_paragraphs_from_pdf(input_path)
         highlight_sentences_in_pdf(
             input_path,
             output_path,
-            all_page_paragraphs,
             model=args.model,
             majority_vote=args.majority_vote,
             verbose=args.verbose
