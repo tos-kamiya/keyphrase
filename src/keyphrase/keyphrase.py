@@ -17,7 +17,7 @@ class ImportantSentenceIndices(BaseModel):
     indices: List[int]
 
 
-def extract_paragraphs_from_pdf(pdf_path: str) -> List[str]:
+def extract_paragraphs_from_pdf(pdf_path: str) -> List[List[str]]:
     doc = fitz.open(pdf_path)
     all_page_paragraphs = []
     for page in doc:
@@ -28,7 +28,7 @@ def extract_paragraphs_from_pdf(pdf_path: str) -> List[str]:
 
 
 def extract_sentences(paragraph: str) -> List[str]:
-    normalized = paragraph.replace("．", "。")
+    normalized = paragraph.replace("．", "。")  # blingfire does not recognize "．" as Japanese punctuation
     sents_text = blingfire.text_to_sentences(normalized)
     sents = [s.strip() for s in sents_text.split("\n") if s.strip()]
     return sents
@@ -121,7 +121,9 @@ def get_category_indices(
             format=ImportantSentenceIndices.model_json_schema(),
         )
         try:
-            result = ImportantSentenceIndices.model_validate_json(response.message.content)
+            c = response.message.content
+            assert i is not None
+            result = ImportantSentenceIndices.model_validate_json(c)
             indices = [i for i in result.indices if 1 <= i <= len(sentences)]
             for idx in indices:
                 votes[idx] = votes.get(idx, 0) + 1
@@ -204,7 +206,7 @@ def highlight_sentences_in_pdf(
             for idx, cat in enumerate(labeled):
                 if cat is None:
                     continue
-                sent = sentences[idx].replace("。", "")
+                sent = sentences[idx].replace("。", "")  # blingfire does not recognize "．" as Japanese punctuation
                 for inst in page.search_for(sent):
                     annot = page.add_rect_annot(inst)
                     annot.set_colors(stroke=None, fill=PDF_COLOR_MAP[cat])
