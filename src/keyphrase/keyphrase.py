@@ -39,18 +39,26 @@ def make_category_prompt(
     numbered: List[str],
     category: str
 ) -> str:
+    # 各カテゴリの指示文
     category_instructions = {
         "idea": (
             "Carefully select only the sentence(s) that most directly and specifically describe "
-            "the main motivations, ideas, approaches of the paper."
+            "the main motivations, new ideas, methods, or system proposals of the paper. "
+            "This includes descriptions of what is newly proposed, developed, or designed in the work, "
+            "such as tools, algorithms, or approaches. "
+            "For example, sentences that state 'In this paper, we propose...' or explain the system/method itself "
+            "should be classified here, not under experiment."
         ),
         "experiment": (
             "Carefully select only the sentence(s) that most directly and specifically summarize "
-            "experiments, evaluations, or main results."
+            "the experiments, evaluations, main results, or empirical investigations. "
+            "This category should include statements about how the proposed ideas, systems, or methods "
+            "were tested, assessed, or validated, including what was measured and the key findings. "
+            "Do not include sentences about the proposal of tools or methods themselves; only their evaluation or testing."
         ),
         "threat": (
             "Carefully select only the sentence(s) that mention possible threats to validity, limitations, "
-            "weaknesses, failure cases. "
+            "weaknesses, or failure cases. "
             "This includes concerns about generalization, data quality, experimental design, "
             "and any risks or uncertainties in the effectiveness of the method."
         ),
@@ -59,14 +67,15 @@ def make_category_prompt(
         raise ValueError(f"Unknown category: {category}")
     core_instruction = category_instructions[category]
     shared_tail = (
-        "In most cases, there should be at most one, sometimes zero, such sentence(s).  "
+        "In most cases, there should be at most one, sometimes zero, such sentence(s).\n"
         "If none apply, return an empty list.\n"
-        "Return a JSON object with a key 'line_numbers', listing only the number(s) of the most directly relevant sentence(s). "
-        "Do NOT select sentences about author names, URLs, publication info, acknowledgments, references, or general metadata. "
+        "Return a JSON object with a key 'line_numbers', listing only the number(s) of the most directly relevant sentence(s).\n"
+        "Do NOT select sentences about author names, URLs, publication info, acknowledgments, references, or general metadata.\n"
+        "If a sentence could be placed in more than one category, select the single category that best fits its main purpose.\n"
         "Return only the JSON object, nothing else.\n\n"
     )
     return (
-        "Below are numbered sentences from a scientific paper paragraph. "
+        "Below are numbered sentences from a scientific paper paragraph.\n"
         f"{core_instruction}\n{shared_tail}"
         + "\n".join(numbered)
     )
