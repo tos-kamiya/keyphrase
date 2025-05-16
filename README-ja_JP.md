@@ -1,19 +1,21 @@
 # Keyphrase
 
-**keyphrase**は、PDFやMarkdownファイルから、LLM（大規模言語モデル）を用いて自動的にキーフレーズや重要文を検出し、色分けされたハイライトで注釈を付与するコマンドラインツールです。学術論文や技術文書から、主要なポイントを素早く抽出できるように設計されています。
+**keyphrase**は、PDFやMarkdownファイルから、LLM（大規模言語モデル）を用いてキーフレーズや重要文を自動検出し、色分けハイライト付きで注釈を行うコマンドラインツールです。学術論文や技術文書など、主要なポイントを一目で把握したいシーンに最適です。
 
 ## 特徴
 
-* **PDF**および**Markdown**（`.md`）ファイルの両方に対応
-* AIによる自動判別で以下の内容を検出
-  * 提案手法や新しいアイデア（青色でハイライト）
-  * 実験や結果の要約（緑色でハイライト）
-  * 妥当性の脅威や制約事項（黄色でハイライト）
-* 色分けされたハイライト付きの新しいファイルを出力
-* `tqdm`によるプログレスバー表示（`--verbose`オプション）
-* 柔軟な出力ファイル名の指定が可能
+* **PDF**・**Markdown**（`.md`）ファイルの両方に対応
+* AIによる自動判別と色分け
 
-## インストール方法
+  * **提案手法・新規アイデア**（青色でハイライト）
+  * **実験・評価・主な結果**（緑色でハイライト）
+  * **妥当性の脅威・制約・リスク**（黄色でハイライト）
+* セクション見出しも自動検出しハイライト可能
+* 色分けされたハイライト付きの新しいファイルを出力
+* 柔軟な出力ファイル名指定、既存ファイルの上書き防止
+* すべてローカル推論：高速・安全
+
+## インストール
 
 ### 1. pipxでのインストール（推奨）
 
@@ -21,22 +23,22 @@
 pipx install https://github.com/tos-kamiya/keyphrase
 ```
 
-`pipx`が未インストールの場合は、以下で導入してください：
+`pipx`が未導入の場合は以下でインストールできます：
 
 ```bash
 python -m pip install --user pipx
 python -m pipx ensurepath
 ```
 
-### 2. **Ollamaのインストールとセットアップ**
+### 2. Ollamaの導入
 
 keyphraseはローカルLLM推論のため[Ollama](https://ollama.com/)を利用します。
 
-お使いのプラットフォームに合わせて[公式サイト](https://ollama.com/download)の手順でOllamaを導入してください。
+お使いのOSごとに[公式サイト](https://ollama.com/download)の手順でOllamaをセットアップしてください。
 
-### 3. **OllamaにQwen3:30bモデルをダウンロード**
+### 3. Qwen3:30bモデルのダウンロード
 
-ローカルOllamaサーバーで`qwen3:30b`モデルのインストールが必要です：
+Ollamaで`qwen3:30b`モデルをインストールしてください：
 
 ```bash
 ollama pull qwen3:30b
@@ -50,42 +52,54 @@ ollama pull qwen3:30b
 keyphrase input.pdf
 ```
 
-* `out.pdf`（未作成なら）に色付きハイライトを付与して出力します。
+* PDFの場合：色分けハイライト付きの`out.pdf`（未作成なら）を出力します。
 
-Markdownファイルの場合：
+Markdownの場合：
 
 ```bash
 keyphrase input.md
 ```
 
-* `<span>`タグを使って色付きハイライトを付与した`out.md`が出力されます。
+* Markdownの場合：`out.md`を出力し、各文に`<span>`タグで色付きハイライトを付与します。
 
 ### 出力ファイル名のオプション
 
-* `-o OUTPUT` / `--output OUTPUT`：出力ファイル名を指定します。`-o -`（ハイフン1つ）とすると標準出力（stdout）に書き出します。
-* `-O`：`INPUT-annotated.pdf`または`INPUT-annotated.md`として出力
-* デフォルトでは`out.pdf`や`out.md`となります。同名のファイルが既に存在する場合は`--overwrite`を指定しない限りエラーになります。
+* `-o OUTPUT`, `--output OUTPUT`：出力ファイル名を指定。`-o -`とすると標準出力（stdout）に出力（Markdownのみ対応）。
+* `-O`, `--output-auto`：`INPUT-annotated.pdf`や`INPUT-annotated.md`として自動命名出力
+* デフォルトは`out.pdf`または`out.md`。同名ファイルが既にある場合は`--overwrite`指定がないとエラー
+
+### バッチ・バッファ処理
+
+* `--buffer-size N`：LLMへまとめて問い合わせる文バッファの最大文字数（デフォルト：2000）。バッファ単位で処理することで効率向上。
+
+### カテゴリ投票（多重判定）
+
+* `-i N`, `--intersection-vote N`：各バッファごとにカテゴリ判定をN回実施し、**すべてで一致した文のみ**を採用（交差投票方式）。デフォルト`3`（安定性向上。ただし検出数は減少傾向）。
 
 ### その他のオプション
 
-* `--majority-vote`：各段落・各カテゴリごとに3回LLMで判定し、多数決で決定します（安定性向上用、ただしアイデア検出数がやや少なくなる傾向あり）。
-* `--verbose`：tqdmによるプログレスバーを表示
-* `-m MODEL`, `--model MODEL`：使用するOllamaモデルの指定（デフォルトは`qwen3:30b`）
-* `--overwrite`：出力ファイルが既に存在する場合に上書き
+* `-m MODEL`, `--model MODEL`：使用するOllamaモデルを指定（デフォルトは`qwen3:30b`）
+* `--overwrite`：既存の出力ファイルを上書き
 
 ### 使用例
 
 ```bash
-keyphrase paper.pdf -O --verbose
+keyphrase paper.pdf -O
 ```
 
-* `paper.pdf`を色分けで注釈し、`paper-annotated.pdf`として出力、進捗バー付きで実行します。
+* `paper.pdf`を色分け注釈し、`paper-annotated.pdf`として出力
+
+```bash
+keyphrase notes.md -o highlights.md -i 5 --buffer-size 5000
+```
+
+* `notes.md`を`highlights.md`として出力し、投票数5、バッファ5000文字で処理
 
 ## 必要要件
 
-* Python 3.10以上
-* ローカルで稼働する [Ollama](https://ollama.com/)
-* Ollamaで`qwen3:30b`モデルをインストール済み（`ollama pull qwen3:30b`）
+* Python 3.10 以上
+* ローカルで動作する [Ollama](https://ollama.com/)
+* Ollamaで`qwen3:30b`モデルインストール済み（`ollama pull qwen3:30b`）
 
 ## ライセンス
 
@@ -93,7 +107,6 @@ MIT
 
 ## 注意
 
-* このツールは外部APIにデータを送信せず、すべてローカルのOllama上で処理します。
-* 学術論文などの解析には、なるべく高品質で整理されたPDFやMarkdownファイルをお使いください。
-
-
+* 本ツールは外部API等へのデータ送信を一切行わず、すべてローカルOllamaで処理されます。
+* 学術論文などでの利用時は、なるべくレイアウトが整理された高品質なPDF・Markdownをご利用ください。
+* Markdown出力は各文を`<span style="background-color:...">...</span>`で色付けします。
