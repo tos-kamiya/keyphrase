@@ -50,7 +50,9 @@ def extract_sentences(paragraph: str) -> List[str]:
 
 def make_category_prompt(numbered: List[str], category: str) -> str:
     """
-    Construct a prompt for the LLM to select sentences by category.
+    Construct a prompt for the LLM to select sentences by category,
+    instructing it to select only a small number of sentences
+    that most help the reader understand the paper.
     Args:
         numbered (List[str]): Numbered sentences (e.g., "1: ...").
         category (str): Category to extract ("idea", "experiment", "threat").
@@ -86,7 +88,8 @@ def make_category_prompt(numbered: List[str], category: str) -> str:
         raise ValueError(f"Unknown category: {category}")
     core_instruction = category_instructions[category]
     shared_tail = (
-        "In most cases, there should be at most one, sometimes zero, such sentence(s).\n"
+        "In most cases, select only one or two such sentence(s) that would be most helpful for a reader to understand the main points. "
+        "It is better to select fewer sentences, rather than more. Sometimes there may be none that qualify.\n"
         "If none apply, return an empty list.\n"
         "Return a JSON object with a key 'line_numbers', listing only the number(s) of the most directly relevant sentence(s).\n"
         "Do NOT select sentences about author names, URLs, publication info, acknowledgments, references, or general metadata.\n"
