@@ -1,15 +1,33 @@
 import re
+from typing import List
 
 
-def split_markdown_paragraphs(md_text):
-    lines = md_text.splitlines()
-    paragraphs = []
-    buffer = []
-    in_code_block = False
-    code_fence = None
-    in_quote_block = False
+def split_markdown_paragraphs(md_text: str) -> List[str]:
+    """
+    Splits a Markdown text into paragraphs, treating headings, list items,
+    code blocks, and quote blocks as separate paragraphs.
 
-    def flush():
+    - Headings (lines starting with #) always start a new paragraph.
+    - List items (lines starting with '-', '+', '*', or numbered lists) are single-paragraph.
+    - Code blocks (delimited by ``` or ~~~) are extracted as single paragraphs.
+    - Quote blocks (lines starting with '>') are grouped as single paragraphs.
+    - Normal paragraphs are split by empty lines.
+
+    Args:
+        md_text (str): The input Markdown text.
+
+    Returns:
+        List[str]: List of paragraphs as strings.
+    """
+    lines: List[str] = md_text.splitlines()
+    paragraphs: List[str] = []
+    buffer: List[str] = []
+    in_code_block: bool = False
+    code_fence: str | None = None
+    in_quote_block: bool = False
+
+    def flush() -> None:
+        """Flush the current buffer as a paragraph if not empty."""
         nonlocal buffer
         if buffer:
             para = "\n".join(buffer).strip()
@@ -19,7 +37,8 @@ def split_markdown_paragraphs(md_text):
 
     for line in lines:
         stripped = line.strip()
-        # コードブロック開始・終了判定
+
+        # Check for code block start/end (``` or ~~~)
         code_match = re.match(r"^(```|~~~)", stripped)
         if code_match:
             fence = code_match.group(1)
@@ -40,19 +59,19 @@ def split_markdown_paragraphs(md_text):
             buffer.append(line)
             continue
 
-        # 見出し判定
+        # Heading (e.g., "#", "##", etc.) always starts a new paragraph
         if re.match(r"^#{1,6}\s", stripped):
             flush()
             paragraphs.append(line)
             continue
 
-        # リストアイテム判定
+        # List item (unordered or ordered) as a single-paragraph
         if re.match(r"^(\s*([-+*]|\d+\.)\s)", line):
             flush()
             paragraphs.append(line)
             continue
 
-        # 引用判定
+        # Quote block (lines starting with ">")
         if stripped.startswith(">"):
             if not in_quote_block:
                 flush()
@@ -64,14 +83,14 @@ def split_markdown_paragraphs(md_text):
                 flush()
                 in_quote_block = False
 
-        # 空行判定
+        # Empty line splits paragraphs
         if not stripped:
             flush()
             continue
 
-        # 通常行
+        # Regular line, add to buffer
         buffer.append(line)
 
-    # バッファ残り
+    # Flush any remaining lines in the buffer
     flush()
     return paragraphs

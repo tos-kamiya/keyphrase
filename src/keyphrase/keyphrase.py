@@ -11,13 +11,13 @@ from pydantic import BaseModel
 
 from .text_utils import split_markdown_paragraphs
 
-CATEGORY_PRIORITY = ["threat", "experiment", "idea"]
-COLOR_MAP = {
+CATEGORY_PRIORITY: List[str] = ["threat", "experiment", "idea"]
+COLOR_MAP: Dict[str, Tuple[float, float, float]] = {
     "idea": (0, 0.5, 1),  # blue
     "experiment": (0, 1, 0),  # green
     "threat": (1, 1, 0),  # yellow
 }
-MD_COLOR_MAP = {
+MD_COLOR_MAP: Dict[str, str] = {
     "idea": "#3498db",  # blue
     "experiment": "#27ae60",  # green
     "threat": "#f7e158",  # yellow
@@ -25,17 +25,41 @@ MD_COLOR_MAP = {
 
 
 class ImportantSentences(BaseModel):
+    """
+    Pydantic model for the output of sentence selection LLM prompts.
+
+    Attributes:
+        line_numbers (List[int]): List of selected sentence indices.
+    """
+
     line_numbers: List[int]
 
 
 def extract_sentences(paragraph: str) -> List[str]:
+    """
+    Split a paragraph into sentences using blingfire.
+    Args:
+        paragraph (str): The input paragraph.
+    Returns:
+        List[str]: List of sentences.
+    """
     normalized = paragraph.replace("．", "。")
     sents_text = blingfire.text_to_sentences(normalized)
     return [s.strip() for s in sents_text.split("\n") if s.strip()]
 
 
 def make_category_prompt(numbered: List[str], category: str) -> str:
-    category_instructions = {
+    """
+    Construct a prompt for the LLM to select sentences by category.
+    Args:
+        numbered (List[str]): Numbered sentences (e.g., "1: ...").
+        category (str): Category to extract ("idea", "experiment", "threat").
+    Returns:
+        str: LLM prompt.
+    Raises:
+        ValueError: If an unknown category is specified.
+    """
+    category_instructions: Dict[str, str] = {
         "idea": (
             "Carefully select only the sentence(s) that most directly and specifically describe "
             "the main motivations, new ideas, methods, or system proposals of the paper. "
@@ -76,6 +100,13 @@ def make_category_prompt(numbered: List[str], category: str) -> str:
 
 
 def make_heading_prompt(numbered: List[str]) -> str:
+    """
+    Construct a prompt for the LLM to select heading-like sentences.
+    Args:
+        numbered (List[str]): Numbered sentences.
+    Returns:
+        str: LLM prompt.
+    """
     instruction = (
         "From the sentence with line numbers below, select only those that are likely to be section headings, "
         "titles, or subsection titles. If none apply, return an empty list. "
@@ -90,6 +121,16 @@ def detect_heading_indices_with_llm(
     sentences: List[str],
     model: str,
 ) -> List[int]:
+    """
+    Use the LLM to detect which sentences are likely headings.
+
+    Args:
+        sentences (List[str]): Sentences to analyze.
+        model (str): Model name for the LLM.
+
+    Returns:
+        List[int]: Indices (1-based) of heading-like sentences.
+    """
     numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
     prompt = make_heading_prompt(numbered)
     response = ollama.chat(
@@ -107,8 +148,19 @@ def get_category_indices(
     model: str,
     intersection_vote_trials: int = 1,
 ) -> List[int]:
+    """
+    Use the LLM to select sentences matching a given category, optionally with intersection voting.
+    Args:
+        sentences (List[str]): Sentences to analyze.
+        category (str): Category ("idea", "experiment", "threat").
+        model (str): LLM model name.
+        intersection_vote_trials (int): Number of intersection-voting trials.
+
+    Returns:
+        List[int]: Indices (1-based) of selected sentences.
+    """
     numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
-    result_sets = []
+    result_sets: List[set[int]] = []
     for _ in range(intersection_vote_trials):
         prompt = make_category_prompt(numbered, category)
         response = ollama.chat(
@@ -132,7 +184,18 @@ def get_category_indices(
 
 
 def label_sentences(sentences: List[str], model: str, intersection_vote_trials: int = 1) -> List[Optional[str]]:
-    cat_indices_map = {
+    """
+    Assign a category label to each sentence using LLM voting.
+
+    Args:
+        sentences (List[str]): Sentences to label.
+        model (str): LLM model name.
+        intersection_vote_trials (int): Number of intersection-voting trials.
+
+    Returns:
+        List[Optional[str]]: List of category labels ("idea", "experiment", "threat") or None.
+    """
+    cat_indices_map: Dict[str, List[int]] = {
         cat: get_category_indices(
             sentences,
             cat,
@@ -150,8 +213,19 @@ def label_sentences(sentences: List[str], model: str, intersection_vote_trials: 
     return labeled
 
 
-def add_headings(headings, sentences, model, verbose=False):
+def add_headings(headings: List[str], sentences: List[str], model: str, verbose: bool = False) -> None:
+    """
+    Add detected headings to the headings list.
+
+    Args:
+        headings (List[str]): List to append headings to.
+        sentences (List[str]): Sentences to analyze.
+        model (str): LLM model name.
+        verbose (bool): If True, print heading info to stderr.
+    """
+
     def should_extract_headings(num_lines: int, num_heading_lines: int) -> bool:
+        # Avoid extracting headings if too many are detected.
         return not (num_lines >= 10 and num_heading_lines / num_lines >= 0.5)
 
     heading_idxs = detect_heading_indices_with_llm(sentences, model)
@@ -166,20 +240,40 @@ def add_headings(headings, sentences, model, verbose=False):
 
 
 def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
+    """
+    Calculate the total character length of all sentences in the buffer.
+
+    Args:
+        buffer (List[Tuple[int, int, str]]): Buffer of (para/page idx, sent idx, sentence).
+
+    Returns:
+        int: Total character count.
+    """
     return sum(len(sent) for (_, _, sent) in buffer)
 
 
 def process_buffered_pdf(
-    doc,
+    doc: fitz.Document,
     buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
     headings: List[str],
     model: str,
     intersection_vote_trials: int = 1,
     verbose: bool = False,
 ) -> None:
+    """
+    Process a batch (buffer) of sentences for a PDF, highlighting sentences according to category.
+
+    Args:
+        doc (fitz.Document): PyMuPDF document object.
+        buffer (List[Tuple[int, int, str]]): Sentences to process, with page indices.
+        headings (List[str]): List of detected headings.
+        model (str): LLM model name.
+        intersection_vote_trials (int): Number of intersection-voting trials.
+        verbose (bool): If True, print headings.
+    """
     sentences = [item[2] for item in buffer]
 
-    # Batch detect headings
+    # Batch detect headings and update headings list
     add_headings(headings, sentences, model, verbose=verbose)
 
     # Batch label and annotate
@@ -205,6 +299,17 @@ def highlight_sentences_in_pdf(
     intersection_vote_trials: int = 1,
     verbose: bool = False,
 ) -> None:
+    """
+    Highlight important sentences in a PDF file using the LLM.
+
+    Args:
+        pdf_path (str): Input PDF path.
+        output_pdf_path (str): Output (highlighted) PDF path.
+        model (str): LLM model name.
+        buffer_size (int): Buffer size (character count).
+        intersection_vote_trials (int): Number of intersection-voting trials.
+        verbose (bool): If True, print progress.
+    """
     doc = fitz.open(pdf_path)
     buffer: List[Tuple[int, int, str]] = []
     headings: List[str] = []
@@ -237,6 +342,19 @@ def process_buffered_md(
     intersection_vote_trials: int = 1,
     verbose: bool = False,
 ) -> Dict[Tuple[int, int], str]:
+    """
+    Process a batch (buffer) of sentences for a Markdown file, returning highlights as HTML spans.
+
+    Args:
+        buffer (List[Tuple[int, int, str]]): Sentences to process, with paragraph indices.
+        headings (List[str]): List of detected headings.
+        model (str): LLM model name.
+        intersection_vote_trials (int): Number of intersection-voting trials.
+        verbose (bool): If True, print headings.
+
+    Returns:
+        Dict[Tuple[int, int], str]: Mapping (para_idx, sent_idx) to highlighted HTML.
+    """
     sentences = [item[2] for item in buffer]
 
     # Batch detect headings
@@ -259,6 +377,17 @@ def highlight_sentences_in_md(
     intersection_vote_trials: int = 1,
     verbose: bool = False,
 ) -> None:
+    """
+    Highlight important sentences in a Markdown file using the LLM.
+
+    Args:
+        md_path (str): Input Markdown path.
+        output_path (Optional[str]): Output file path (if None, print to stdout).
+        model (str): LLM model name.
+        buffer_size (int): Buffer size (character count).
+        intersection_vote_trials (int): Number of intersection-voting trials.
+        verbose (bool): If True, print progress.
+    """
     with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
     paragraphs = split_markdown_paragraphs(content)
@@ -284,7 +413,7 @@ def highlight_sentences_in_md(
             )
         )
 
-    # Reconstruct with highlights
+    # Reconstruct Markdown with highlighted sentences
     highlighted_paragraphs: List[str] = []
     for p_idx, para in enumerate(paragraphs):
         sentences = extract_sentences(para)
@@ -305,6 +434,22 @@ def highlight_sentences_in_md(
 def get_output_path(
     input_path: str, output: Optional[str], output_auto: bool, suffix: str = "-annotated", overwrite: bool = False
 ) -> Optional[str]:
+    """
+    Compute the output path based on the input and options.
+
+    Args:
+        input_path (str): Input file path.
+        output (Optional[str]): Output path specified by the user.
+        output_auto (bool): Whether to automatically generate output name.
+        suffix (str): Suffix to append for auto-generated outputs.
+        overwrite (bool): If False, do not overwrite existing files.
+
+    Returns:
+        Optional[str]: Output file path or None (if output to stdout).
+
+    Raises:
+        SystemExit: If the output file exists and overwrite is not allowed.
+    """
     if output == "-":
         return None
     ext = os.path.splitext(input_path)[1].lower()
@@ -326,6 +471,18 @@ def get_output_path(
 
 
 def detect_filetype(path: str) -> str:
+    """
+    Detect the file type ("pdf" or "md") from extension.
+
+    Args:
+        path (str): File path.
+
+    Returns:
+        str: "pdf" or "md".
+
+    Raises:
+        ValueError: If the extension is not recognized.
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext == ".pdf":
         return "pdf"
@@ -335,6 +492,9 @@ def detect_filetype(path: str) -> str:
 
 
 def main() -> None:
+    """
+    Main entry point: parse arguments, dispatch to PDF or Markdown highlighter.
+    """
     parser = argparse.ArgumentParser(
         description="Highlight key sentences in PDF or Markdown (AI-based color coding, heading-aware)"
     )
@@ -369,7 +529,7 @@ def main() -> None:
         input_path, args.output, args.output_auto, suffix="-annotated", overwrite=args.overwrite
     )
 
-    intersection_vote_trials = min(1, args.intersection_vote)
+    intersection_vote_trials: int = min(1, args.intersection_vote)
 
     if filetype == "pdf":
         if output_path is None:
