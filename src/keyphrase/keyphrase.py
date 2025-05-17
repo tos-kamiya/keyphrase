@@ -5,241 +5,101 @@ import sys
 from typing import List, Dict, Optional, Tuple
 
 import fitz  # PyMuPDF
-import blingfire
 import ollama
 from pydantic import BaseModel
+from tqdm import tqdm
 
-from .text_utils import split_markdown_paragraphs
+from .text_utils import extract_sentences, split_markdown_paragraphs
 
-CATEGORY_PRIORITY: List[str] = ["threat", "experiment", "idea"]
+MAX_SENTENCE_LENGTH = 80
+
 COLOR_MAP: Dict[str, Tuple[float, float, float]] = {
-    "idea": (0, 0.5, 1),  # blue
-    "experiment": (0, 1, 0),  # green
     "threat": (1, 1, 0),  # yellow
+    "experiment": (0, 1, 0),  # green
+    "approach": (0, 0.5, 1),  # blue
 }
 MD_COLOR_MAP: Dict[str, str] = {
-    "idea": "#3498db",  # blue
-    "experiment": "#27ae60",  # green
     "threat": "#f7e158",  # yellow
+    "experiment": "#27ae60",  # green
+    "approach": "#3498db",  # blue
 }
 
 
-class ImportantSentences(BaseModel):
-    """
-    Pydantic model for the output of sentence selection LLM prompts.
-
-    Attributes:
-        line_numbers (List[int]): List of selected sentence indices.
-    """
-
-    line_numbers: List[int]
-
-
-def extract_sentences(paragraph: str) -> List[str]:
-    """
-    Split a paragraph into sentences using blingfire.
-    Args:
-        paragraph (str): The input paragraph.
-    Returns:
-        List[str]: List of sentences.
-    """
-    normalized = paragraph.replace("．", "。")
-    sents_text = blingfire.text_to_sentences(normalized)
-    return [s.strip() for s in sents_text.split("\n") if s.strip()]
-
-
-def make_category_prompt(numbered: List[str], category: str) -> str:
-    """
-    Construct a prompt for the LLM to select sentences by category,
-    instructing it to select only a small number of sentences
-    that most help the reader understand the paper.
-    Args:
-        numbered (List[str]): Numbered sentences (e.g., "1: ...").
-        category (str): Category to extract ("idea", "experiment", "threat").
-    Returns:
-        str: LLM prompt.
-    Raises:
-        ValueError: If an unknown category is specified.
-    """
-    category_instructions: Dict[str, str] = {
-        "idea": (
-            "Carefully select only the sentence(s) that most directly and specifically describe "
-            "the main motivations, new ideas, methods, or system proposals of the paper. "
-            "This includes descriptions of what is newly proposed, developed, or designed in the work, "
-            "such as tools, algorithms, or approaches. "
-            "For example, sentences that state 'In this paper, we propose...' or explain the system/method itself "
-            "should be classified here, not under experiment."
-        ),
-        "experiment": (
-            "Carefully select only the sentence(s) that most directly and specifically summarize "
-            "the experiments, evaluations, main results, or empirical investigations. "
-            "This category should include statements about how the proposed ideas, systems, or methods "
-            "were tested, assessed, or validated, including what was measured and the key findings. "
-            "Do not include sentences about the proposal of tools or methods themselves; only their evaluation or testing."
-        ),
-        "threat": (
-            "Carefully select only the sentence(s) that mention possible threats to validity, limitations, "
-            "weaknesses, or failure cases. "
-            "This includes concerns about generalization, data quality, experimental design, "
-            "and any risks or uncertainties in the effectiveness of the method."
-        ),
-    }
-    if category not in category_instructions:
-        raise ValueError(f"Unknown category: {category}")
-    core_instruction = category_instructions[category]
-    shared_tail = (
-        "In most cases, select only one or two such sentence(s) that would be most helpful for a reader to understand the main points. "
-        "It is better to select fewer sentences, rather than more. Sometimes there may be none that qualify.\n"
-        "If none apply, return an empty list.\n"
-        "Return a JSON object with a key 'line_numbers', listing only the number(s) of the most directly relevant sentence(s).\n"
-        "Do NOT select sentences about author names, URLs, publication info, acknowledgments, references, or general metadata.\n"
-        "If a sentence could be placed in more than one category, select the single category that best fits its main purpose.\n"
-        "Return only the JSON object, nothing else.\n\n"
-    )
-    return (
+def make_joint_category_prompt(numbered: List[str]) -> str:
+    INSTRUCTIONS = (
         "Below are numbered sentences from a scientific paper paragraph.\n"
-        f"{core_instruction}\n{shared_tail}" + "\n".join(numbered)
+        "For each of the following categories, select a small number of sentences that, when combined, would best summarize that category's key points in the paragraph. "
+        "Try to choose sentences that cover different aspects of the category, rather than multiple sentences expressing the same or similar ideas. "
+        "Avoid selecting long blocks of consecutive sentences within a single category—if several consecutive sentences are candidates, select only the most essential one(s).\n"
+        "\n"
+        "Categories:\n"
+        "  - 'approach': The most important idea, main novelty, or core contribution of the paper. Exclude detailed explanations.\n"
+        "  - 'experiment': Experimental setup, major observations and experimental results of the study. Exclude minor results or general statements.\n"
+        "  - 'threat': Threats to validity, limitations, weaknesses, or potential problems with the approach or experimental results.\n"
+        "  - 'metadata': Paper title, author names, references, acknowledgments, or other kinds of metadata.\n"
+        "Some sentences may not belong to any category, and some categories may have no selected sentences.\n"
+        "Return a JSON object with exactly these four keys: 'approach', 'experiment', 'threat', 'metadata'.\n"
+        "Each key should have a list of 0-based indices for the sentences that belong to that category.\n"
+        "If no sentence fits a category, use an empty list for that category.\n"
+        "\n"
+        "Example:\n"
+        "{\n"
+        '  "approach": [2],\n'
+        '  "experiment": [4],\n'
+        '  "threat": [7],\n'
+        '  "metadata": []\n'
+        "}\n"
+        "\n"
+        "Numbered sentences:\n"
     )
+    return INSTRUCTIONS + "\n".join(numbered)
 
 
-def make_heading_prompt(numbered: List[str]) -> str:
-    """
-    Construct a prompt for the LLM to select heading-like sentences.
-    Args:
-        numbered (List[str]): Numbered sentences.
-    Returns:
-        str: LLM prompt.
-    """
-    instruction = (
-        "From the sentence with line numbers below, select only those that are likely to be section headings, "
-        "titles, or subsection titles. If none apply, return an empty list. "
-        "Return a JSON object with a key 'line_numbers', listing only the number(s) of heading-like sentences. "
-        "Do NOT select sentences that are part of the body text or typical content. "
-        "Return only the JSON object, nothing else.\n\n"
-    )
-    return instruction + "\n".join(numbered)
+class JointImportantPhrases(BaseModel):
+    approach: List[int]
+    experiment: List[int]
+    threat: List[int]
+    metadata: List[int]
 
 
-def detect_heading_indices_with_llm(
-    sentences: List[str],
-    model: str,
-) -> List[int]:
-    """
-    Use the LLM to detect which sentences are likely headings.
-
-    Args:
-        sentences (List[str]): Sentences to analyze.
-        model (str): Model name for the LLM.
-
-    Returns:
-        List[int]: Indices (1-based) of heading-like sentences.
-    """
-    numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
-    prompt = make_heading_prompt(numbered)
-    response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        format=ImportantSentences.model_json_schema(),
-    )
-    result = ImportantSentences.model_validate_json(response.message.content)
-    return [i for i in result.line_numbers if 1 <= i <= len(sentences)]
-
-
-def get_category_indices(
-    sentences: List[str],
-    category: str,
-    model: str,
-    intersection_vote_trials: int = 1,
-) -> List[int]:
-    """
-    Use the LLM to select sentences matching a given category, optionally with intersection voting.
-    Args:
-        sentences (List[str]): Sentences to analyze.
-        category (str): Category ("idea", "experiment", "threat").
-        model (str): LLM model name.
-        intersection_vote_trials (int): Number of intersection-voting trials.
-
-    Returns:
-        List[int]: Indices (1-based) of selected sentences.
-    """
-    numbered = [f"{i+1}: {s}" for i, s in enumerate(sentences)]
-    result_sets: List[set[int]] = []
-    for _ in range(intersection_vote_trials):
-        prompt = make_category_prompt(numbered, category)
-        response = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            format=ImportantSentences.model_json_schema(),
-        )
-        try:
-            result = ImportantSentences.model_validate_json(response.message.content)
-            indices = set(ln for ln in result.line_numbers if 1 <= ln <= len(sentences))
-            result_sets.append(indices)
-        except Exception as e:
-            print(f"parse error for {category}: {e}", file=sys.stderr)
-            result_sets.append(set())
-
-    if len(result_sets) >= 2:
-        intersection = set.intersection(*result_sets)
-        return sorted(intersection)
-    else:
-        return sorted(result_sets[0]) if result_sets else []
-
-
-def label_sentences(sentences: List[str], model: str, intersection_vote_trials: int = 1) -> List[Optional[str]]:
+def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
     """
     Assign a category label to each sentence using LLM voting.
 
     Args:
         sentences (List[str]): Sentences to label.
         model (str): LLM model name.
-        intersection_vote_trials (int): Number of intersection-voting trials.
 
     Returns:
-        List[Optional[str]]: List of category labels ("idea", "experiment", "threat") or None.
+        List[Optional[str]]: List of category labels ("key", "constraint") or None.
     """
-    cat_indices_map: Dict[str, List[int]] = {
-        cat: get_category_indices(
-            sentences,
-            cat,
+    numbered = [f"{idx}: {s}" for idx, s in enumerate(sentences)]
+
+    maps = []
+    for _ in range(3):
+        prompt = make_joint_category_prompt(numbered)
+        response = ollama.chat(
             model=model,
-            intersection_vote_trials=intersection_vote_trials,
+            messages=[{"role": "user", "content": prompt}],
+            format=JointImportantPhrases.model_json_schema(),
         )
-        for cat in CATEGORY_PRIORITY
-    }
+        result = JointImportantPhrases.model_validate_json(response.message.content)
+        size = len(result.approach) + len(result.experiment) + len(result.threat)
+        cat_indices_map = {
+            "approach": result.approach,
+            "experiment": result.experiment,
+            "threat": result.threat,
+        }
+        maps.append((size, cat_indices_map))
+    maps.sort(key=lambda sc: sc[0])
+    cat_indices_map = maps[0][1]
+
     labeled: List[Optional[str]] = [None] * len(sentences)
-    for cat in CATEGORY_PRIORITY:
-        for idx in cat_indices_map[cat]:
-            orig_idx = idx - 1
-            if labeled[orig_idx] is None:
-                labeled[orig_idx] = cat
+    for cat, idxs in cat_indices_map.items():
+        for idx in idxs:
+            if labeled[idx] is None:
+                labeled[idx] = cat
     return labeled
-
-
-def add_headings(headings: List[str], sentences: List[str], model: str, verbose: bool = False) -> None:
-    """
-    Add detected headings to the headings list.
-
-    Args:
-        headings (List[str]): List to append headings to.
-        sentences (List[str]): Sentences to analyze.
-        model (str): LLM model name.
-        verbose (bool): If True, print heading info to stderr.
-    """
-
-    def should_extract_headings(num_lines: int, num_heading_lines: int) -> bool:
-        # Avoid extracting headings if too many are detected.
-        return not (num_lines >= 10 and num_heading_lines / num_lines >= 0.5)
-
-    heading_idxs = detect_heading_indices_with_llm(sentences, model)
-    if should_extract_headings(len(sentences), len(heading_idxs)):
-        new_h = [sentences[i - 1] for i in heading_idxs]
-        if new_h:
-            if verbose:
-                for h in new_h:
-                    print(f"[Heading] {h}", file=sys.stderr)
-                print("----------")
-            headings.extend(new_h)
 
 
 def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
@@ -258,10 +118,7 @@ def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
 def process_buffered_pdf(
     doc: fitz.Document,
     buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
-    headings: List[str],
     model: str,
-    intersection_vote_trials: int = 1,
-    verbose: bool = False,
 ) -> None:
     """
     Process a batch (buffer) of sentences for a PDF, highlighting sentences according to category.
@@ -271,16 +128,13 @@ def process_buffered_pdf(
         buffer (List[Tuple[int, int, str]]): Sentences to process, with page indices.
         headings (List[str]): List of detected headings.
         model (str): LLM model name.
-        intersection_vote_trials (int): Number of intersection-voting trials.
         verbose (bool): If True, print headings.
     """
     sentences = [item[2] for item in buffer]
 
-    # Batch detect headings and update headings list
-    add_headings(headings, sentences, model, verbose=verbose)
-
     # Batch label and annotate
-    labels = label_sentences(sentences, model, intersection_vote_trials=intersection_vote_trials)
+    labels = label_sentences(sentences, model)
+
     for (page_idx, sent_idx, sent), cat in zip(buffer, labels):
         if not cat:
             continue
@@ -299,7 +153,6 @@ def highlight_sentences_in_pdf(
     output_pdf_path: str,
     model: str,
     buffer_size: int,
-    intersection_vote_trials: int = 1,
     verbose: bool = False,
 ) -> None:
     """
@@ -310,29 +163,28 @@ def highlight_sentences_in_pdf(
         output_pdf_path (str): Output (highlighted) PDF path.
         model (str): LLM model name.
         buffer_size (int): Buffer size (character count).
-        intersection_vote_trials (int): Number of intersection-voting trials.
         verbose (bool): If True, print progress.
     """
     doc = fitz.open(pdf_path)
     buffer: List[Tuple[int, int, str]] = []
-    headings: List[str] = []
 
-    for page_idx, page in enumerate(doc):
+    pages = list(doc)
+    if verbose:
+        it = tqdm(pages, unit="page")
+    else:
+        it = pages
+    for page_idx, page in enumerate(it):
         page_text = page.get_text()
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
         for para in paragraphs:
-            sentences = extract_sentences(para)
+            sentences = extract_sentences(para, MAX_SENTENCE_LENGTH)
             for idx, sent in enumerate(sentences):
                 buffer.append((page_idx, idx, sent))
             if buffer_len_chars(buffer) >= buffer_size:
-                process_buffered_pdf(
-                    doc, buffer, headings, model, intersection_vote_trials=intersection_vote_trials, verbose=verbose
-                )
+                process_buffered_pdf(doc, buffer, model)
                 buffer.clear()
     if buffer:
-        process_buffered_pdf(
-            doc, buffer, headings, model, intersection_vote_trials=intersection_vote_trials, verbose=verbose
-        )
+        process_buffered_pdf(doc, buffer, model)
     doc.save(output_pdf_path, garbage=4)
     doc.close()
     print(f"Info: Save the highlighted pdf to: {output_pdf_path}", file=sys.stderr)
@@ -340,10 +192,7 @@ def highlight_sentences_in_pdf(
 
 def process_buffered_md(
     buffer: List[Tuple[int, int, str]],  # (para_idx, sent_idx, sentence)
-    headings: List[str],
     model: str,
-    intersection_vote_trials: int = 1,
-    verbose: bool = False,
 ) -> Dict[Tuple[int, int], str]:
     """
     Process a batch (buffer) of sentences for a Markdown file, returning highlights as HTML spans.
@@ -352,7 +201,6 @@ def process_buffered_md(
         buffer (List[Tuple[int, int, str]]): Sentences to process, with paragraph indices.
         headings (List[str]): List of detected headings.
         model (str): LLM model name.
-        intersection_vote_trials (int): Number of intersection-voting trials.
         verbose (bool): If True, print headings.
 
     Returns:
@@ -360,11 +208,8 @@ def process_buffered_md(
     """
     sentences = [item[2] for item in buffer]
 
-    # Batch detect headings
-    add_headings(headings, sentences, model, verbose=verbose)
-
     # Batch label and collect highlights
-    labels = label_sentences(sentences, model, intersection_vote_trials=intersection_vote_trials)
+    labels = label_sentences(sentences, model)
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
         if cat:
@@ -377,7 +222,6 @@ def highlight_sentences_in_md(
     output_path: Optional[str],
     model: str,
     buffer_size: int,
-    intersection_vote_trials: int = 1,
     verbose: bool = False,
 ) -> None:
     """
@@ -388,7 +232,6 @@ def highlight_sentences_in_md(
         output_path (Optional[str]): Output file path (if None, print to stdout).
         model (str): LLM model name.
         buffer_size (int): Buffer size (character count).
-        intersection_vote_trials (int): Number of intersection-voting trials.
         verbose (bool): If True, print progress.
     """
     with open(md_path, "r", encoding="utf-8") as f:
@@ -396,30 +239,27 @@ def highlight_sentences_in_md(
     paragraphs = split_markdown_paragraphs(content)
 
     buffer: List[Tuple[int, int, str]] = []
-    headings: List[str] = []
     highlighted: Dict[Tuple[int, int], str] = {}
 
-    for p_idx, para in enumerate(paragraphs):
-        sentences = extract_sentences(para)
+    if verbose:
+        it = tqdm(paragraphs, unit="paragraph")
+    else:
+        it = paragraphs
+    for p_idx, para in enumerate(it):
+        sentences = extract_sentences(para, MAX_SENTENCE_LENGTH)
         for s_idx, sent in enumerate(sentences):
             buffer.append((p_idx, s_idx, sent))
         if buffer_len_chars(buffer) >= buffer_size:
-            batch_highlights = process_buffered_md(
-                buffer, headings, model, intersection_vote_trials=intersection_vote_trials, verbose=verbose
-            )
+            batch_highlights = process_buffered_md(buffer, model)
             highlighted.update(batch_highlights)
             buffer.clear()
     if buffer:
-        highlighted.update(
-            process_buffered_md(
-                buffer, headings, model, intersection_vote_trials=intersection_vote_trials, verbose=verbose
-            )
-        )
+        highlighted.update(process_buffered_md(buffer, model))
 
     # Reconstruct Markdown with highlighted sentences
     highlighted_paragraphs: List[str] = []
     for p_idx, para in enumerate(paragraphs):
-        sentences = extract_sentences(para)
+        sentences = extract_sentences(para, MAX_SENTENCE_LENGTH)
         new_sents: List[str] = []
         for s_idx, sent in enumerate(sentences):
             new_sents.append(highlighted.get((p_idx, s_idx), sent))
@@ -515,14 +355,6 @@ def main() -> None:
     parser.add_argument(
         "-m", "--model", type=str, default="qwen3:30b", help="LLM for identify key sentences (default: 'qwen3:30b')."
     )
-    parser.add_argument(
-        "-i",
-        "--intersection-vote",
-        type=int,
-        metavar="N",
-        default=3,
-        help="Run LLM N times and only keep indices detected in ALL runs (intersection voting) (default: 3).",
-    )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
     args = parser.parse_args()
 
@@ -531,8 +363,6 @@ def main() -> None:
     output_path: Optional[str] = get_output_path(
         input_path, args.output, args.output_auto, suffix="-annotated", overwrite=args.overwrite
     )
-
-    intersection_vote_trials: int = min(1, args.intersection_vote)
 
     if filetype == "pdf":
         if output_path is None:
@@ -546,7 +376,6 @@ def main() -> None:
             output_path,
             model=args.model,
             buffer_size=args.buffer_size,
-            intersection_vote_trials=intersection_vote_trials,
             verbose=args.verbose,
         )
     elif filetype == "md":
@@ -555,7 +384,6 @@ def main() -> None:
             output_path,
             model=args.model,
             buffer_size=args.buffer_size,
-            intersection_vote_trials=intersection_vote_trials,
             verbose=args.verbose,
         )
     else:

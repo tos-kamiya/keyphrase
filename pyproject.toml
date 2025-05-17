@@ -25,6 +25,7 @@ dependencies = [
   "numpy",
   "pymupdf",
   "ollama",
+  "tqdm",
 ]
 
 [tool.hatch.version]

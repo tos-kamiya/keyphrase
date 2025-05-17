@@ -1,5 +1,7 @@
 import re
-from typing import List
+from typing import List, Optional
+
+import blingfire
 
 
 def split_markdown_paragraphs(md_text: str) -> List[str]:
@@ -94,3 +96,53 @@ def split_markdown_paragraphs(md_text: str) -> List[str]:
     # Flush any remaining lines in the buffer
     flush()
     return paragraphs
+
+
+def split_by_punct_character(text: str, sentence_max_length: int) -> List[str]:
+    words = []
+    for text in re.split("( )", text):
+        if text == " ":
+            words.append(text)
+        else:
+            ws = blingfire.text_to_words(text).split(" ")
+            words.extend(ws)
+
+    phrases = [""]
+    for w in words:
+        phrases[-1] += w
+        if len(w) == 1:  # is punct char
+            phrases.append("")
+    if phrases[-1] == "":
+        phrases.pop()
+
+    merged_phrases = [""]
+    for p in phrases:
+        if len(merged_phrases[-1] + p) <= sentence_max_length:
+            merged_phrases[-1] += p
+        else:
+            merged_phrases.append(p)
+    if merged_phrases[-1] == "":
+        merged_phrases.pop()
+
+    return merged_phrases
+
+
+def extract_sentences(paragraph: str, sentence_max_length: Optional[int] = 100) -> List[str]:
+    normalized = paragraph.replace("．", "。")
+    sents_text = blingfire.text_to_sentences(normalized)
+
+    sents = [s.strip() for s in sents_text.split("\n") if s.strip()]
+    r = []
+    for s in sents:
+        if len(s) <= sentence_max_length:
+            r.append(s)
+        else:
+            phrases = split_by_punct_character(s, sentence_max_length)
+            r.extend(phrases)
+    return r
+
+
+# if __name__ == '__main__':
+#     text = "電話番号の入力チェックをするときには「この入力された電話番号は『2桁か3桁の数字で始まっていて、その次にハイフンがあって、その次に3桁か4桁の数字があって、その次にハイフンがあって、最後は4桁の数字で終わっている。あっ、もちろん数字とハイフン以外の文字は使ってないよね』な条件に一致しますか～」などのチェックをします。"
+#     r = split_by_punct_character(text, 50)
+#     print(r)
