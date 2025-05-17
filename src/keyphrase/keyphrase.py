@@ -31,7 +31,7 @@ def make_joint_category_prompt(numbered: List[str]) -> str:
         "Avoid selecting long blocks of consecutive sentences within a single category—if several consecutive sentences are candidates, select only the most essential one(s).\n"
         "\n"
         "Categories:\n"
-        "  - 'approach': The most important idea, main novelty, or core contribution of the paper. Exclude detailed explanations.\n"
+        "  - 'approach': The most important idea, main novelty, or core contribution of the paper. Include concise descriptions or overviews of the proposed method or system as a whole. Exclude lengthy, step-by-step details or technical minutiae.\n"
         "  - 'experiment': Experimental setup, major observations and experimental results of the study. Exclude minor results or general statements.\n"
         "  - 'threat': Threats to validity, limitations, weaknesses, or potential problems with the approach or experimental results.\n"
         "  - 'metadata': Paper title, author names, references, acknowledgments, or other kinds of metadata.\n"

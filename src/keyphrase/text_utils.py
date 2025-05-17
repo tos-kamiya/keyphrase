@@ -140,9 +140,3 @@ def extract_sentences(paragraph: str, sentence_max_length: Optional[int] = 100) 
             phrases = split_by_punct_character(s, sentence_max_length)
             r.extend(phrases)
     return r
-
-
-# if __name__ == '__main__':
-#     text = "電話番号の入力チェックをするときには「この入力された電話番号は『2桁か3桁の数字で始まっていて、その次にハイフンがあって、その次に3桁か4桁の数字があって、その次にハイフンがあって、最後は4桁の数字で終わっている。あっ、もちろん数字とハイフン以外の文字は使ってないよね』な条件に一致しますか～」などのチェックをします。"
-#     r = split_by_punct_character(text, 50)
-#     print(r)
