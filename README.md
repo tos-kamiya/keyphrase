@@ -4,16 +4,14 @@
 
 ## Features
 
-* Supports both **PDF** and **Markdown** (`.md`) files.
+* Supports both **PDF** and **Markdown** (`.md`) files
 * AI-based detection and color-coding of:
-
-  * **Proposed ideas/methods** (blue)
-  * **Experimental results/summary** (green)
-  * **Threats to validity / limitations** (yellow)
-* Section headings can also be automatically detected and highlighted.
-* Output is a new, annotated file with color-coded highlights.
-* Flexible output filename options, with overwrite safety.
-* Fast and private: all inference is done locally via Ollama.
+  * **Approach/methodology** (blue): The main novelty or core contribution of the paper
+  * **Experimental results** (green): Key observations and experimental outcomes
+  * **Threats to validity / limitations** (yellow): Weaknesses or potential problems with the approach
+* Output is a new, annotated file with color-coded highlights
+* Flexible output filename options, with overwrite protection
+* All inference is done locally via Ollama
 
 ## Installation
 
@@ -36,12 +34,12 @@ keyphrase uses [Ollama](https://ollama.com/) for local LLM inference.
 
 Follow the instructions for your platform on the [official Ollama site](https://ollama.com/download).
 
-### 3. Download the Qwen3:30b model for Ollama
+### 3. Download the Qwen3 model for Ollama
 
-You need to install the `qwen3:30b` model in your local Ollama server:
+You need to install the `qwen3:30b-a3b` model in your local Ollama server:
 
 ```bash
-ollama pull qwen3:30b
+ollama pull qwen3:30b-a3b
 ```
 
 ## Usage
@@ -75,16 +73,12 @@ keyphrase input.md
 * `--buffer-size N`: Buffer size for batch LLM queries (in characters, default: 2000).
   Sentences are processed in batches for efficiency.
 
-### Category voting options
-
-* `-i N`, `--intersection-vote N`:
-  For each buffer, query the LLM N times for each category and only keep sentences detected in **all** runs (intersection vote).
-  (Default: `3`, which improves reliability but may reduce the number of detected key sentences.)
-
 ### Other options
 
-* `-m MODEL`, `--model MODEL`: Specify the Ollama model to use (default: `qwen3:30b`).
+* `-m MODEL`, `--model MODEL`: Specify the Ollama model to use (default: `qwen3:30b-a3b`).
+* `--max-sentence-length N`: Maximum length of each sentence for analysis (default: 80).
 * `--overwrite`: Overwrite output file if it already exists.
+* `--verbose`: Show progress bar with tqdm.
 
 ### Example
 
@@ -95,16 +89,17 @@ keyphrase paper.pdf -O
 * Annotates `paper.pdf`, outputs as `paper-annotated.pdf`.
 
 ```bash
-keyphrase notes.md -o highlights.md -i 5 --buffer-size 5000
+keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100 --verbose
 ```
 
-* Annotates `notes.md`, outputs to `highlights.md`, using 5-vote intersection and a larger buffer size.
+* Annotates `notes.md`, outputs to `highlights.md`, using a larger buffer size, longer maximum sentence length, and showing progress.
 
 ## Requirements
 
 * Python 3.10 or newer
 * [Ollama](https://ollama.com/) running locally
-* Qwen3:30b model installed in Ollama (`ollama pull qwen3:30b`)
+* Qwen3:30b-a3b model installed in Ollama (`ollama pull qwen3:30b-a3b`)
+* Required dependencies: blingfire, numpy, pymupdf, ollama, tqdm, pydantic
 
 ## License
 

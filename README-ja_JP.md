@@ -6,14 +6,12 @@
 
 * **PDF**・**Markdown**（`.md`）ファイルの両方に対応
 * AIによる自動判別と色分け
-
-  * **提案手法・新規アイデア**（青色でハイライト）
-  * **実験・評価・主な結果**（緑色でハイライト）
-  * **妥当性の脅威・制約・リスク**（黄色でハイライト）
-* セクション見出しも自動検出しハイライト可能
+  * **提案手法・主要アイデア**（青色でハイライト）：論文の主要な新規性や核となる貢献
+  * **実験・評価結果**（緑色でハイライト）：主要な観察結果と実験的成果
+  * **妥当性の脅威・制約**（黄色でハイライト）：アプローチや結果に関する弱点や潜在的問題点
 * 色分けされたハイライト付きの新しいファイルを出力
 * 柔軟な出力ファイル名指定、既存ファイルの上書き防止
-* すべてローカル推論：高速・安全
+* すべてローカル推論：Ollamaを利用
 
 ## インストール
 
@@ -36,12 +34,12 @@ keyphraseはローカルLLM推論のため[Ollama](https://ollama.com/)を利用
 
 お使いのOSごとに[公式サイト](https://ollama.com/download)の手順でOllamaをセットアップしてください。
 
-### 3. Qwen3:30bモデルのダウンロード
+### 3. Qwen3モデルのダウンロード
 
-Ollamaで`qwen3:30b`モデルをインストールしてください：
+Ollamaで`qwen3:30b-a3b`モデルをインストールしてください：
 
 ```bash
-ollama pull qwen3:30b
+ollama pull qwen3:30b-a3b
 ```
 
 ## 使い方
@@ -72,14 +70,12 @@ keyphrase input.md
 
 * `--buffer-size N`：LLMへまとめて問い合わせる文バッファの最大文字数（デフォルト：2000）。バッファ単位で処理することで効率向上。
 
-### カテゴリ投票（多重判定）
-
-* `-i N`, `--intersection-vote N`：各バッファごとにカテゴリ判定をN回実施し、**すべてで一致した文のみ**を採用（交差投票方式）。デフォルト`3`（安定性向上。ただし検出数は減少傾向）。
-
 ### その他のオプション
 
-* `-m MODEL`, `--model MODEL`：使用するOllamaモデルを指定（デフォルトは`qwen3:30b`）
+* `-m MODEL`, `--model MODEL`：使用するOllamaモデルを指定（デフォルトは`qwen3:30b-a3b`）
+* `--max-sentence-length N`：分析対象の文の最大長を指定（デフォルト：80）
 * `--overwrite`：既存の出力ファイルを上書き
+* `--verbose`：tqdmを使用して進捗バーを表示
 
 ### 使用例
 
@@ -90,16 +86,17 @@ keyphrase paper.pdf -O
 * `paper.pdf`を色分け注釈し、`paper-annotated.pdf`として出力
 
 ```bash
-keyphrase notes.md -o highlights.md -i 5 --buffer-size 5000
+keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100 --verbose
 ```
 
-* `notes.md`を`highlights.md`として出力し、投票数5、バッファ5000文字で処理
+* `notes.md`を`highlights.md`として出力し、バッファ5000文字、文の最大長100文字で処理、進捗バーを表示
 
 ## 必要要件
 
 * Python 3.10 以上
 * ローカルで動作する [Ollama](https://ollama.com/)
-* Ollamaで`qwen3:30b`モデルインストール済み（`ollama pull qwen3:30b`）
+* Ollamaで`qwen3:30b-a3b`モデルインストール済み（`ollama pull qwen3:30b-a3b`）
+* 必要な依存関係: blingfire, numpy, pymupdf, ollama, tqdm, pydantic
 
 ## ライセンス
 
