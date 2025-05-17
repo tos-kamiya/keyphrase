@@ -2,6 +2,12 @@
 
 **keyphrase**は、PDFやMarkdownファイルから、LLM（大規模言語モデル）を用いてキーフレーズや重要文を自動検出し、色分けハイライト付きで注釈を行うコマンドラインツールです。学術論文や技術文書など、主要なポイントを一目で把握したいシーンに最適です。
 
+**出力例**
+
+* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf)
+
+* [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf) (英文)
+
 ## 特徴
 
 * **PDF**・**Markdown**（`.md`）ファイルの両方に対応

@@ -2,6 +2,12 @@
 
 **keyphrase** is a command-line tool that automatically detects key phrases and important sentences in PDF or Markdown files using an LLM (Large Language Model) and annotates them with color highlights. It is designed for academic papers, technical documents, and any text where understanding the main points at a glance is helpful.
 
+**Example Outputs**
+
+* [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)
+
+* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf) (in Japanese)
+
 ## Features
 
 * Supports both **PDF** and **Markdown** (`.md`) files
