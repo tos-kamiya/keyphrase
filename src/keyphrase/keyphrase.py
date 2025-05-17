@@ -11,8 +11,6 @@ from tqdm import tqdm
 
 from .text_utils import extract_sentences, split_markdown_paragraphs
 
-MAX_SENTENCE_LENGTH = 80
-
 COLOR_MAP: Dict[str, Tuple[float, float, float]] = {
     "threat": (1, 1, 0),  # yellow
     "experiment": (0, 1, 0),  # green
@@ -126,9 +124,7 @@ def process_buffered_pdf(
     Args:
         doc (fitz.Document): PyMuPDF document object.
         buffer (List[Tuple[int, int, str]]): Sentences to process, with page indices.
-        headings (List[str]): List of detected headings.
         model (str): LLM model name.
-        verbose (bool): If True, print headings.
     """
     sentences = [item[2] for item in buffer]
 
@@ -153,6 +149,7 @@ def highlight_sentences_in_pdf(
     output_pdf_path: str,
     model: str,
     buffer_size: int,
+    max_sentence_length: int,
     verbose: bool = False,
 ) -> None:
     """
@@ -163,6 +160,7 @@ def highlight_sentences_in_pdf(
         output_pdf_path (str): Output (highlighted) PDF path.
         model (str): LLM model name.
         buffer_size (int): Buffer size (character count).
+        max_sentence_length (int): Maximum length of each sentence.
         verbose (bool): If True, print progress.
     """
     doc = fitz.open(pdf_path)
@@ -177,7 +175,7 @@ def highlight_sentences_in_pdf(
         page_text = page.get_text()
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
         for para in paragraphs:
-            sentences = extract_sentences(para, MAX_SENTENCE_LENGTH)
+            sentences = extract_sentences(para, max_sentence_length)
             for idx, sent in enumerate(sentences):
                 buffer.append((page_idx, idx, sent))
             if buffer_len_chars(buffer) >= buffer_size:
@@ -199,9 +197,7 @@ def process_buffered_md(
 
     Args:
         buffer (List[Tuple[int, int, str]]): Sentences to process, with paragraph indices.
-        headings (List[str]): List of detected headings.
         model (str): LLM model name.
-        verbose (bool): If True, print headings.
 
     Returns:
         Dict[Tuple[int, int], str]: Mapping (para_idx, sent_idx) to highlighted HTML.
@@ -222,6 +218,7 @@ def highlight_sentences_in_md(
     output_path: Optional[str],
     model: str,
     buffer_size: int,
+    max_sentence_length: int,
     verbose: bool = False,
 ) -> None:
     """
@@ -232,6 +229,7 @@ def highlight_sentences_in_md(
         output_path (Optional[str]): Output file path (if None, print to stdout).
         model (str): LLM model name.
         buffer_size (int): Buffer size (character count).
+        max_sentence_length (int): Maximum length of each sentence.
         verbose (bool): If True, print progress.
     """
     with open(md_path, "r", encoding="utf-8") as f:
@@ -246,7 +244,7 @@ def highlight_sentences_in_md(
     else:
         it = paragraphs
     for p_idx, para in enumerate(it):
-        sentences = extract_sentences(para, MAX_SENTENCE_LENGTH)
+        sentences = extract_sentences(para, max_sentence_length)
         for s_idx, sent in enumerate(sentences):
             buffer.append((p_idx, s_idx, sent))
         if buffer_len_chars(buffer) >= buffer_size:
@@ -259,7 +257,7 @@ def highlight_sentences_in_md(
     # Reconstruct Markdown with highlighted sentences
     highlighted_paragraphs: List[str] = []
     for p_idx, para in enumerate(paragraphs):
-        sentences = extract_sentences(para, MAX_SENTENCE_LENGTH)
+        sentences = extract_sentences(para, max_sentence_length)
         new_sents: List[str] = []
         for s_idx, sent in enumerate(sentences):
             new_sents.append(highlighted.get((p_idx, s_idx), sent))
@@ -353,7 +351,13 @@ def main() -> None:
         help="Buffer size threshold for batch processing (measured in characters, default: 2000)",
     )
     parser.add_argument(
-        "-m", "--model", type=str, default="qwen3:30b", help="LLM for identify key sentences (default: 'qwen3:30b')."
+        "--max-sentence-length",
+        type=int,
+        default=80,
+        help="Maximum length of each sentence for analysis (default: 80)",
+    )
+    parser.add_argument(
+        "-m", "--model", type=str, default="qwen3:30b-a3b", help="LLM for identify key sentences (default: 'qwen3:30b-a3b')."
     )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
     args = parser.parse_args()
@@ -376,6 +380,7 @@ def main() -> None:
             output_path,
             model=args.model,
             buffer_size=args.buffer_size,
+            max_sentence_length=args.max_sentence_length,
             verbose=args.verbose,
         )
     elif filetype == "md":
@@ -384,6 +389,7 @@ def main() -> None:
             output_path,
             model=args.model,
             buffer_size=args.buffer_size,
+            max_sentence_length=args.max_sentence_length,
             verbose=args.verbose,
         )
     else:
