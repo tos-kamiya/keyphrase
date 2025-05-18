@@ -27,25 +27,25 @@ def make_joint_category_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
         "Below are numbered sentences from a scientific paper paragraph.\n"
         "For each of the following categories, select a small number of sentences that, when combined, would best summarize that category's key points in the paragraph. "
-        "Try to choose sentences that cover different aspects of the category, rather than multiple sentences expressing the same or similar ideas. "
-        "Avoid selecting long blocks of consecutive sentences within a single category—if several consecutive sentences are candidates, select only the most essential one(s).\n"
+        "When judging which category a sentence belongs to, consider the context provided by the surrounding sentences.\n"
         "\n"
         "Categories:\n"
         "  - 'approach': The most important idea, main novelty, or core contribution of the paper. Include concise descriptions or overviews of the proposed method or system as a whole. Exclude lengthy, step-by-step details or technical minutiae.\n"
         "  - 'experiment': Experimental setup, major observations and experimental results of the study. Exclude minor results or general statements.\n"
         "  - 'threat': Threats to validity, limitations, weaknesses, or potential problems with the approach or experimental results.\n"
-        "  - 'metadata': Paper title, author names, references, acknowledgments, or other kinds of metadata.\n"
-        "Some sentences may not belong to any category, and some categories may have no selected sentences.\n"
-        "Return a JSON object with exactly these four keys: 'approach', 'experiment', 'threat', 'metadata'.\n"
+        "  - 'reference': Reference or bibliography sentences, typically listing prior work or sources cited in the paper.\n"
+        "\n"
+        "Try to choose sentences that cover different aspects of the category, rather than multiple sentences expressing the same or similar ideas. "
+        "Avoid selecting long blocks of consecutive sentences within a single category—if several consecutive sentences are candidates, select only the most essential one(s).\n"
+        "Return a JSON object with exactly these four keys: 'approach', 'experiment', 'threat', 'reference'. "
         "Each key should have a list of 0-based indices for the sentences that belong to that category.\n"
         "If no sentence fits a category, use an empty list for that category.\n"
-        "\n"
         "Example:\n"
         "{\n"
         '  "approach": [2],\n'
         '  "experiment": [4],\n'
         '  "threat": [7],\n'
-        '  "metadata": []\n'
+        '  "reference": [10]\n'
         "}\n"
         "\n"
         "Numbered sentences:\n"
@@ -57,7 +57,7 @@ class JointImportantPhrases(BaseModel):
     approach: List[int]
     experiment: List[int]
     threat: List[int]
-    metadata: List[int]
+    reference: List[int]
 
 
 def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
@@ -181,8 +181,9 @@ def highlight_sentences_in_pdf(
             if buffer_len_chars(buffer) >= buffer_size:
                 process_buffered_pdf(doc, buffer, model)
                 buffer.clear()
-    if buffer:
-        process_buffered_pdf(doc, buffer, model)
+        if buffer:
+            process_buffered_pdf(doc, buffer, model)
+            buffer.clear()
     doc.save(output_pdf_path, garbage=4)
     doc.close()
     print(f"Info: Save the highlighted pdf to: {output_pdf_path}", file=sys.stderr)
@@ -347,8 +348,8 @@ def main() -> None:
     parser.add_argument(
         "--buffer-size",
         type=int,
-        default=2000,
-        help="Buffer size threshold for batch processing (measured in characters, default: 2000)",
+        default=1500,
+        help="Buffer size threshold for batch processing (measured in characters, default: 1500)",
     )
     parser.add_argument(
         "--max-sentence-length",
