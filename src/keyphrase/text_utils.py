@@ -149,16 +149,16 @@ def extract_sentences(paragraph: str, sentence_max_length: Optional[int] = 100) 
 #         if len(line) <= sentence_max_length:
 #             r.append(line)
 #             continue
-# 
+#
 #         normalized = paragraph.replace("．", "。")
 #         sents_text = blingfire.text_to_sentences(normalized)
-# 
+#
 #         sents = [s.strip() for s in sents_text.split("\n") if s.strip()]
 #         for s in sents:
 #             if len(s) <= sentence_max_length:
 #                 r.append(s)
 #                 continue
-# 
+#
 #             phrases = split_by_punct_character(s, sentence_max_length)
 #             r.extend(phrases)
 #     return r

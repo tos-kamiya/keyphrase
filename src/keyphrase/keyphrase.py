@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Tuple
 
 import fitz  # PyMuPDF
 import ollama
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError  # ValidationError をインポート
 from tqdm import tqdm
 
 from .text_utils import extract_sentences, split_markdown_paragraphs
@@ -62,41 +62,71 @@ class JointImportantPhrases(BaseModel):
 
 def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
     """
-    Assign a category label to each sentence using LLM voting.
+    Assign a category label to each sentence using LLM.
+    The strategy is to try LLM multiple times and select the response
+    that classifies the fewest sentences (excluding 'reference' for this size metric),
+    aiming for a more concise selection.
 
     Args:
         sentences (List[str]): Sentences to label.
         model (str): LLM model name.
 
     Returns:
-        List[Optional[str]]: List of category labels ("key", "constraint") or None.
+        List[Optional[str]]: List of category labels ("approach", "experiment", "threat", "reference") or None.
     """
     numbered = [f"{idx}: {s}" for idx, s in enumerate(sentences)]
 
     maps = []
-    for _ in range(3):
+    num_retries = 3
+    for i in range(num_retries):
         prompt = make_joint_category_prompt(numbered)
-        response = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            format=JointImportantPhrases.model_json_schema(),
+        try:
+            response = ollama.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                format=JointImportantPhrases.model_json_schema(),
+                options={"temperature": 0.0},  # To potentially improve response consistency
+            )
+            result = JointImportantPhrases.model_validate_json(response.message.content)
+
+            size = len(result.approach) + len(result.experiment) + len(result.threat)
+            cat_indices_map = {
+                "approach": result.approach,
+                "experiment": result.experiment,
+                "threat": result.threat,
+            }
+            maps.append((size, cat_indices_map))
+        except ValidationError as e:
+            print(f"Warning: LLM returned invalid JSON schema on attempt {i + 1}: {e}", file=sys.stderr)
+            print(f"LLM response content: {response.message.content}", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: LLM chat call failed on attempt {i + 1}: {e}", file=sys.stderr)
+            if "response" in locals() and response and hasattr(response, "message"):
+                print(f"LLM response content (if available): {response.message.content}", file=sys.stderr)
+
+    if not maps:
+        print(
+            f"Error: No valid LLM responses received after {num_retries} attempts. Returning all sentences as unclassified.",
+            file=sys.stderr,
         )
-        result = JointImportantPhrases.model_validate_json(response.message.content)
-        size = len(result.approach) + len(result.experiment) + len(result.threat)
-        cat_indices_map = {
-            "approach": result.approach,
-            "experiment": result.experiment,
-            "threat": result.threat,
-        }
-        maps.append((size, cat_indices_map))
+        return [None] * len(sentences)
+
+    # Select the map with the smallest size (fewest classified sentences in core categories)
     maps.sort(key=lambda sc: sc[0])
     cat_indices_map = maps[0][1]
 
     labeled: List[Optional[str]] = [None] * len(sentences)
-    for cat, idxs in cat_indices_map.items():
-        for idx in idxs:
-            if labeled[idx] is None:
-                labeled[idx] = cat
+
+    for cat_name in ["approach", "experiment", "threat"]:
+        for idx in cat_indices_map[cat_name]:
+            if 0 <= idx < len(sentences):  # Validate index is within bounds
+                if labeled[idx] is None:  # Only label if not already labeled by a previous category
+                    labeled[idx] = cat_name
+            else:
+                print(
+                    f"Warning: LLM returned out-of-bounds index {idx} for category '{cat_name}'. Skipping.",
+                    file=sys.stderr,
+                )
     return labeled
 
 
@@ -132,16 +162,28 @@ def process_buffered_pdf(
     labels = label_sentences(sentences, model)
 
     for (page_idx, sent_idx, sent), cat in zip(buffer, labels):
-        if not cat:
+        if not cat or cat not in COLOR_MAP:  # Ensure category is valid for highlighting
             continue
         page = doc[page_idx]
-        text = sent.replace("。", "")
-        for quads in page.search_for(text):
+
+        search_text = sent.replace("。", "").strip()
+        if not search_text:  # Avoid searching for empty strings
+            continue
+
+        quads_found = False
+        for quads in page.search_for(search_text):
             highlight = page.add_highlight_annot(quads)
             r, g, b = COLOR_MAP[cat]
             highlight.set_colors({"stroke": (r, g, b)})
             highlight.set_opacity(0.5)
             highlight.update()
+            quads_found = True
+
+        if not quads_found and sys.stderr.isatty():  # Only print warning if actually interactiving
+            # This warning can be noisy for complex PDFs.
+            # Only enable if debugging search issues.
+            # print(f"Warning: Could not find sentence '{sent}' (sanitized to '{search_text}') on page {page_idx+1} for category '{cat}'.", file=sys.stderr)
+            pass
 
 
 def highlight_sentences_in_pdf(
@@ -174,6 +216,8 @@ def highlight_sentences_in_pdf(
     for page_idx, page in enumerate(it):
         page_text = page.get_text()
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
+
+        # Ensure that the last batch in a page is also processed
         for para in paragraphs:
             sentences = extract_sentences(para, max_sentence_length)
             for idx, sent in enumerate(sentences):
@@ -181,9 +225,16 @@ def highlight_sentences_in_pdf(
             if buffer_len_chars(buffer) >= buffer_size:
                 process_buffered_pdf(doc, buffer, model)
                 buffer.clear()
+
+        # Process any remaining sentences in the buffer at the end of the page
         if buffer:
             process_buffered_pdf(doc, buffer, model)
             buffer.clear()
+
+    if buffer:  # This check is redundant due to page-level processing, but harmless.
+        process_buffered_pdf(doc, buffer, model)
+        buffer.clear()
+
     doc.save(output_pdf_path, garbage=4)
     doc.close()
     print(f"Info: Save the highlighted pdf to: {output_pdf_path}", file=sys.stderr)
@@ -209,7 +260,8 @@ def process_buffered_md(
     labels = label_sentences(sentences, model)
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
-        if cat:
+        # Ensure category is valid and has a corresponding color in MD_COLOR_MAP
+        if cat and cat in MD_COLOR_MAP:
             highlights[(para_idx, sent_idx)] = f'<span style="background-color:{MD_COLOR_MAP[cat]}">{sent}</span>'
     return highlights
 
@@ -244,16 +296,23 @@ def highlight_sentences_in_md(
         it = tqdm(paragraphs, unit="paragraph")
     else:
         it = paragraphs
+
+    # Process paragraphs and buffer sentences
     for p_idx, para in enumerate(it):
         sentences = extract_sentences(para, max_sentence_length)
         for s_idx, sent in enumerate(sentences):
             buffer.append((p_idx, s_idx, sent))
+
+        # If buffer size threshold is reached, process the batch
         if buffer_len_chars(buffer) >= buffer_size:
             batch_highlights = process_buffered_md(buffer, model)
             highlighted.update(batch_highlights)
             buffer.clear()
+
+    # Process any remaining sentences in the buffer after all paragraphs are done
     if buffer:
         highlighted.update(process_buffered_md(buffer, model))
+        buffer.clear()
 
     # Reconstruct Markdown with highlighted sentences
     highlighted_paragraphs: List[str] = []
@@ -261,7 +320,9 @@ def highlight_sentences_in_md(
         sentences = extract_sentences(para, max_sentence_length)
         new_sents: List[str] = []
         for s_idx, sent in enumerate(sentences):
+            # If a sentence is highlighted, use the highlighted HTML; otherwise, use the original sentence
             new_sents.append(highlighted.get((p_idx, s_idx), sent))
+        # Join sentences to form the paragraph. Assuming extract_sentences preserves original spacing/punctuation
         highlighted_paragraphs.append("".join(new_sents))
 
     out_text = "\n\n".join(highlighted_paragraphs)
@@ -294,6 +355,7 @@ def get_output_path(
     """
     if output == "-":
         return None
+
     ext = os.path.splitext(input_path)[1].lower()
     if output:
         out_path = output
@@ -301,6 +363,8 @@ def get_output_path(
         base, _ = os.path.splitext(input_path)
         out_path = f"{base}{suffix}{ext}"
     else:
+        # Default output name if neither -o nor -O is specified
+        # This will create "out.pdf" or "out.md" in the current directory
         out_path = f"out{ext}"
 
     always_overwrite = {"out.md", "out.pdf"}
@@ -330,7 +394,7 @@ def detect_filetype(path: str) -> str:
         return "pdf"
     if ext == ".md":
         return "md"
-    raise ValueError("Unknown file type")
+    raise ValueError(f"Unknown file type for path: {path}. Supported types are .pdf and .md")
 
 
 def main() -> None:
@@ -342,8 +406,8 @@ def main() -> None:
     )
     parser.add_argument("input", help="input PDF or Markdown file")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-o", "--output", help="Output file")
-    group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md)")
+    group.add_argument("-o", "--output", help="Output file. Use '-' for stdout (Markdown only).")
+    group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md).")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
     parser.add_argument(
         "--buffer-size",
@@ -358,13 +422,22 @@ def main() -> None:
         help="Maximum length of each sentence for analysis (default: 80)",
     )
     parser.add_argument(
-        "-m", "--model", type=str, default="qwen3:30b-a3b", help="LLM for identify key sentences (default: 'qwen3:30b-a3b')."
+        "-m",
+        "--model",
+        type=str,
+        default="qwen3:30b-a3b",
+        help="LLM for identify key sentences (default: 'qwen3:30b-a3b').",
     )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
     args = parser.parse_args()
 
     input_path: str = args.input
-    filetype: str = detect_filetype(input_path)
+    try:
+        filetype: str = detect_filetype(input_path)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     output_path: Optional[str] = get_output_path(
         input_path, args.output, args.output_auto, suffix="-annotated", overwrite=args.overwrite
     )
