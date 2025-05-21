@@ -85,7 +85,6 @@ def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 format=JointImportantPhrases.model_json_schema(),
-                options={"temperature": 0.0},  # To potentially improve response consistency
             )
             result = JointImportantPhrases.model_validate_json(response.message.content)
 
