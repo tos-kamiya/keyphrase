@@ -221,7 +221,8 @@ def highlight_sentences_in_pdf(
         for para in paragraphs:
             sentences = extract_sentences(para, max_sentence_length)
             for idx, sent in enumerate(sentences):
-                buffer.append((page_idx, idx, sent))
+                if len(sent) >= 5:
+                    buffer.append((page_idx, idx, sent))
             if buffer_len_chars(buffer) >= buffer_size:
                 process_buffered_pdf(doc, buffer, model)
                 buffer.clear()

@@ -33,3 +33,11 @@ path = "src/keyphrase/__about__.py"
 
 [project.gui-scripts]
 keyphrase = "keyphrase:main"
+
+[tool.coverage.run]
+source_pkgs = ["keyphrase", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/keyphrase/__about__.py",
+]

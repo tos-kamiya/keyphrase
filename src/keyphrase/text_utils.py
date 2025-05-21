@@ -1,5 +1,6 @@
 import re
 from typing import List, Optional
+import unicodedata
 
 import blingfire
 
@@ -98,31 +99,34 @@ def split_markdown_paragraphs(md_text: str) -> List[str]:
     return paragraphs
 
 
-def split_by_punct_character(text: str, sentence_max_length: int) -> List[str]:
-    words = []
-    for text in re.split("( )", text):
-        if text == " ":
-            words.append(text)
-        else:
-            ws = blingfire.text_to_words(text).split(" ")
-            words.extend(ws)
+def is_punctuation(token: str) -> bool:
+    return len(token) == 1 and unicodedata.category(token)[0] == "P"
 
+
+def split_by_punct_character(text: str, sentence_max_length: int) -> List[str]:
     phrases = [""]
-    for w in words:
-        phrases[-1] += w
-        if len(w) == 1:  # is punct char
+    for ch in text:
+        if is_punctuation(ch):
+            phrases.append(ch)
             phrases.append("")
+        else:
+            phrases[-1] += ch
     if phrases[-1] == "":
         phrases.pop()
 
     merged_phrases = [""]
     for p in phrases:
-        if len(merged_phrases[-1] + p) <= sentence_max_length:
+        if not merged_phrases[-1] or len(merged_phrases[-1] + p) <= sentence_max_length:
             merged_phrases[-1] += p
         else:
             merged_phrases.append(p)
-    if merged_phrases[-1] == "":
+    if merged_phrases and merged_phrases[-1] == "":
         merged_phrases.pop()
+
+    # If the last paragraph is too short, merge it to the previous paragraph.
+    if len(merged_phrases) >= 2 and len(merged_phrases[-1]) < sentence_max_length // 3:
+        p = merged_phrases.pop()
+        merged_phrases[-1] += p
 
     return merged_phrases
 
@@ -140,25 +144,3 @@ def extract_sentences(paragraph: str, sentence_max_length: Optional[int] = 100) 
             phrases = split_by_punct_character(s, sentence_max_length)
             r.extend(phrases)
     return r
-
-
-# def extract_sentences(paragraph: str, sentence_max_length: Optional[int] = 100) -> List[str]:
-#     lines = paragraph.split("\n")
-#     r = []
-#     for line in lines:
-#         if len(line) <= sentence_max_length:
-#             r.append(line)
-#             continue
-#
-#         normalized = paragraph.replace("．", "。")
-#         sents_text = blingfire.text_to_sentences(normalized)
-#
-#         sents = [s.strip() for s in sents_text.split("\n") if s.strip()]
-#         for s in sents:
-#             if len(s) <= sentence_max_length:
-#                 r.append(s)
-#                 continue
-#
-#             phrases = split_by_punct_character(s, sentence_max_length)
-#             r.extend(phrases)
-#     return r

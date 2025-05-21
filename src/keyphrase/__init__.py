@@ -2,3 +2,4 @@
 #
 # SPDX-License-Identifier: MIT
 from .keyphrase import main
+from . import text_utils
