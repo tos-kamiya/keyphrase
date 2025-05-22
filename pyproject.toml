@@ -41,3 +41,7 @@ parallel = true
 omit = [
   "src/keyphrase/__about__.py",
 ]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"

@@ -26,7 +26,7 @@ def split_markdown_paragraphs(md_text: str) -> List[str]:
     paragraphs: List[str] = []
     buffer: List[str] = []
     in_code_block: bool = False
-    code_fence: str | None = None
+    code_fence: Optional[str] = None
     in_quote_block: bool = False
 
     def flush() -> None:
@@ -131,7 +131,7 @@ def split_by_punct_character(text: str, sentence_max_length: int) -> List[str]:
     return merged_phrases
 
 
-def extract_sentences(paragraph: str, sentence_max_length: Optional[int] = 100) -> List[str]:
+def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[str]:
     normalized = paragraph.replace("．", "。")
     sents_text = blingfire.text_to_sentences(normalized)
 

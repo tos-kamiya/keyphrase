@@ -80,6 +80,7 @@ def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
     num_retries = 3
     for i in range(num_retries):
         prompt = make_joint_category_prompt(numbered)
+        response = None
         try:
             response = ollama.chat(
                 model=model,
@@ -96,6 +97,7 @@ def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
             }
             maps.append((size, cat_indices_map))
         except ValidationError as e:
+            assert response is not None
             print(f"Warning: LLM returned invalid JSON schema on attempt {i + 1}: {e}", file=sys.stderr)
             print(f"LLM response content: {response.message.content}", file=sys.stderr)
         except Exception as e:
