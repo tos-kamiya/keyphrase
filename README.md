@@ -5,29 +5,32 @@
 **Example Outputs**
 
 * [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)
-
 * [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf) (in Japanese)
+
+**Note:** The example outputs may not reflect the latest version of the tool, and the highlight colors may differ from the current defaults.
 
 ## Features
 
 * Supports both **PDF** and **Markdown** (`.md`) files
-* AI-based detection and color-coding of:
-  * **Approach/methodology** (blue): The main novelty or core contribution of the paper
-  * **Experimental results** (green): Key observations and experimental outcomes
-  * **Threats to validity / limitations** (yellow): Weaknesses or potential problems with the approach
-* Output is a new, annotated file with color-coded highlights
+* AI-based detection and color-coding of key concepts:
+
+  * <span style="display:inline-block;width:40px;height:20px;background:#8edefbb0;"></span> **Approach/methodology** (blue): The main novelty or core contribution of the paper
+  * <span style="display:inline-block;width:40px;height:20px;background:#d0fbb1b0;"></span> **Experimental results** (green): Key observations and experimental outcomes
+  * <span style="display:inline-block;width:40px;height:20px;background:#fec6afb0;"></span> **Threats to validity** (pink): Weaknesses or potential problems with the approach
+* Generates a new, annotated file with color-coded highlights
 * Flexible output filename options, with overwrite protection
-* All inference is done locally via Ollama
+* All LLM inference is done locally via Ollama
+* **Customizable highlight colors** for each category via command-line options
 
 ## Installation
 
-### 1. Install via pipx (recommended):
+### 1. Install via pipx (recommended)
 
 ```bash
 pipx install https://github.com/tos-kamiya/keyphrase
 ```
 
-If you don't have `pipx`, you can install it with:
+If you don't have `pipx`:
 
 ```bash
 python -m pip install --user pipx
@@ -36,13 +39,12 @@ python -m pipx ensurepath
 
 ### 2. Install and set up Ollama
 
-keyphrase uses [Ollama](https://ollama.com/) for local LLM inference.
-
+Keyphrase uses [Ollama](https://ollama.com/) for local LLM inference.
 Follow the instructions for your platform on the [official Ollama site](https://ollama.com/download).
 
 ### 3. Download the Qwen3 model for Ollama
 
-You need to install the `qwen3:30b-a3b` model in your local Ollama server:
+Install the required model in your local Ollama server:
 
 ```bash
 ollama pull qwen3:30b-a3b
@@ -52,27 +54,45 @@ ollama pull qwen3:30b-a3b
 
 ### Basic usage
 
+For PDF:
+
 ```bash
 keyphrase input.pdf
 ```
 
-* For PDFs: creates `out.pdf` (if not present) with color highlights.
+* Annotates `input.pdf`, outputs as `out.pdf` (if not present).
 
-For Markdown files:
+For Markdown:
 
 ```bash
 keyphrase input.md
 ```
 
-* For Markdown: creates `out.md` with color highlights using `<span>` tags.
+* Annotates `input.md`, outputs as `out.md` using HTML `<span>` tags for highlights.
 
 ### Output filename options
 
-* `-o OUTPUT`, `--output OUTPUT`: Specify the output file name.
-  Use `-o -` to write output to standard output (stdout) (Markdown only).
+* `-o OUTPUT`, `--output OUTPUT`: Specify output file name.
+  Use `-o -` to write output to standard output (Markdown only).
 * `-O`, `--output-auto`: Output to `INPUT-annotated.pdf` or `INPUT-annotated.md`.
-* By default, the output will be `out.pdf` or `out.md`.
-  If the file exists, an error will be raised unless `--overwrite` is specified.
+* By default, output will be `out.pdf` or `out.md`.
+  If the file exists, an error is raised unless `--overwrite` is specified.
+
+### Color customization
+
+You can customize the highlight colors for each category using the `--color-map` option.
+
+* **Format:** `name:#rgba` or `name:#rrrggbbaa` (e.g., `approach:#8edefbb0`)
+* **Available category names:** `approach`, `experiment`, `threat`
+* To disable a specific marker, specify `name:0` (e.g., `threat:0`)
+* This option can be used multiple times
+
+**Examples:**
+
+```bash
+# Change 'approach' to red, 'experiment' to blue, and disable 'threat'
+keyphrase input.pdf --color-map approach:#ff0000ff --color-map experiment:#0000ffff --color-map threat:0
+```
 
 ### Batch/Buffering options
 
@@ -81,24 +101,20 @@ keyphrase input.md
 
 ### Other options
 
-* `-m MODEL`, `--model MODEL`: Specify the Ollama model to use (default: `qwen3:30b-a3b`).
-* `--max-sentence-length N`: Maximum length of each sentence for analysis (default: 80).
-* `--overwrite`: Overwrite output file if it already exists.
-* `--verbose`: Show progress bar with tqdm.
+* `-m MODEL`, `--model MODEL`: Specify the Ollama model to use (default: `qwen3:30b-a3b`)
+* `--max-sentence-length N`: Maximum sentence length for analysis (default: 80)
+* `--overwrite`: Overwrite output file if it already exists
+* `--verbose`: Show progress bar with tqdm
 
-### Example
+### More usage examples
 
 ```bash
 keyphrase paper.pdf -O
-```
+# -> Annotates 'paper.pdf', outputs as 'paper-annotated.pdf'
 
-* Annotates `paper.pdf`, outputs as `paper-annotated.pdf`.
-
-```bash
 keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100 --verbose
+# -> Annotates 'notes.md', outputs to 'highlights.md', using a larger buffer, longer sentences, and showing progress.
 ```
-
-* Annotates `notes.md`, outputs to `highlights.md`, using a larger buffer size, longer maximum sentence length, and showing progress.
 
 ## Requirements
 
@@ -113,6 +129,6 @@ MIT
 
 ## Notes
 
-* This tool does **not** send any data to third-party APIs: all processing is local via Ollama.
+* No data is sent to any third-party APIs: all processing is local via Ollama.
 * For best results on scientific papers, use high-quality, clean PDF or Markdown sources.
 * Markdown output uses HTML `<span style="background-color:...">...</span>` for color highlights.

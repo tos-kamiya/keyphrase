@@ -1,33 +1,37 @@
 # Keyphrase
 
-**keyphrase**は、PDFやMarkdownファイルから、LLM（大規模言語モデル）を用いてキーフレーズや重要文を自動検出し、色分けハイライト付きで注釈を行うコマンドラインツールです。学術論文や技術文書など、主要なポイントを一目で把握したいシーンに最適です。
+**keyphrase**は、PDFやMarkdownファイルから、LLM（大規模言語モデル）を用いてキーフレーズや重要文を自動検出し、色分けハイライト付きで注釈を行うコマンドラインツールです。
+学術論文や技術文書など、主要なポイントを一目で把握したい場面に最適です。
 
 **出力例**
 
-* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf)
+* [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)（英文）
+* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf)（日本語）
 
-* [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf) (英文)
+**※** 出力例は最新バージョンのものではないので、配色が異なっています。
 
 ## 特徴
 
-* **PDF**・**Markdown**（`.md`）ファイルの両方に対応
-* AIによる自動判別と色分け
-  * **提案手法・主要アイデア**（青色でハイライト）：論文の主要な新規性や核となる貢献
-  * **実験・評価結果**（緑色でハイライト）：主要な観察結果と実験的成果
-  * **妥当性の脅威・制約**（黄色でハイライト）：アプローチや結果に関する弱点や潜在的問題点
-* 色分けされたハイライト付きの新しいファイルを出力
-* 柔軟な出力ファイル名指定、既存ファイルの上書き防止
-* すべてローカル推論：Ollamaを利用
+* **PDF**および**Markdown**（`.md`）ファイルに対応
+* AI（LLM）による自動判別と色分けハイライト
+
+  * <span style="display:inline-block;width:40px;height:20px;background:#8edefbb0;"></span> **提案手法・主要アイデア**（青）：論文の新規性や主要な貢献
+  * <span style="display:inline-block;width:40px;height:20px;background:#d0fbb1b0;"></span> **実験・評価結果**（緑）：主要な観察結果や実験的成果
+  * <span style="display:inline-block;width:40px;height:20px;background:#fec6afb0;"></span> **妥当性の脅威**（ピンク）：弱点や潜在的な問題点
+* 色分けハイライト付きの新規ファイルを自動生成
+* 出力ファイル名の柔軟な指定や既存ファイルの上書き防止
+* すべてローカルで推論（Ollamaを使用）
+* **カテゴリごとにハイライト色をカスタマイズ可能**
 
 ## インストール
 
-### 1. pipxでのインストール（推奨）
+### 1. pipxによるインストール（推奨）
 
 ```bash
 pipx install https://github.com/tos-kamiya/keyphrase
 ```
 
-`pipx`が未導入の場合は以下でインストールできます：
+`pipx`が未導入の場合：
 
 ```bash
 python -m pip install --user pipx
@@ -36,13 +40,12 @@ python -m pipx ensurepath
 
 ### 2. Ollamaの導入
 
-keyphraseはローカルLLM推論のため[Ollama](https://ollama.com/)を利用します。
+keyphraseはローカル推論のため[Ollama](https://ollama.com/)を利用します。
+公式サイトの[ダウンロードページ](https://ollama.com/download)に従いセットアップしてください。
 
-お使いのOSごとに[公式サイト](https://ollama.com/download)の手順でOllamaをセットアップしてください。
+### 3. Qwen3モデルのインストール
 
-### 3. Qwen3モデルのダウンロード
-
-Ollamaで`qwen3:30b-a3b`モデルをインストールしてください：
+Ollamaで次のコマンドを実行し、必要なモデルを取得してください：
 
 ```bash
 ollama pull qwen3:30b-a3b
@@ -52,11 +55,13 @@ ollama pull qwen3:30b-a3b
 
 ### 基本的な使い方
 
+PDFの場合：
+
 ```bash
 keyphrase input.pdf
 ```
 
-* PDFの場合：色分けハイライト付きの`out.pdf`（未作成なら）を出力します。
+* `input.pdf`を注釈し、`out.pdf`（未作成なら）として出力
 
 Markdownの場合：
 
@@ -64,52 +69,66 @@ Markdownの場合：
 keyphrase input.md
 ```
 
-* Markdownの場合：`out.md`を出力し、各文に`<span>`タグで色付きハイライトを付与します。
+* `input.md`を注釈し、`out.md`としてHTML `<span>`タグでハイライト出力
 
 ### 出力ファイル名のオプション
 
-* `-o OUTPUT`, `--output OUTPUT`：出力ファイル名を指定。`-o -`とすると標準出力（stdout）に出力（Markdownのみ対応）。
-* `-O`, `--output-auto`：`INPUT-annotated.pdf`や`INPUT-annotated.md`として自動命名出力
-* デフォルトは`out.pdf`または`out.md`。同名ファイルが既にある場合は`--overwrite`指定がないとエラー
+* `-o OUTPUT`, `--output OUTPUT`：出力ファイル名を指定
+  `-o -`を指定すると標準出力（Markdownのみ対応）
+* `-O`, `--output-auto`：`INPUT-annotated.pdf`または`INPUT-annotated.md`として自動命名
+* デフォルトは`out.pdf`または`out.md`
+  既に同名ファイルが存在する場合は、`--overwrite`指定がないとエラー
 
-### バッチ・バッファ処理
+### 色のカスタマイズ
 
-* `--buffer-size N`：LLMへまとめて問い合わせる文バッファの最大文字数（デフォルト：2000）。バッファ単位で処理することで効率向上。
+各カテゴリごとのハイライト色は `--color-map` オプションで変更できます。
+
+* **書式**：`name:#rgba` または `name:#rrrggbbaa`（例：`approach:#8edefbb0`）
+* **指定可能なカテゴリ名**：`approach`, `experiment`, `threat`
+* 特定のマーカーを無効化したい場合は `name:0`（例：`threat:0`）
+* このオプションは複数回指定可能です
+
+**使用例：**
+
+```bash
+# approachを赤色、experimentを青色、threatを無効化
+keyphrase input.pdf --color-map approach:#ff0000ff --color-map experiment:#0000ffff --color-map threat:0
+```
+
+### バッチ／バッファ処理オプション
+
+* `--buffer-size N`：LLMへ一括処理する文バッファの最大文字数（デフォルト：2000）
 
 ### その他のオプション
 
-* `-m MODEL`, `--model MODEL`：使用するOllamaモデルを指定（デフォルトは`qwen3:30b-a3b`）
-* `--max-sentence-length N`：分析対象の文の最大長を指定（デフォルト：80）
-* `--overwrite`：既存の出力ファイルを上書き
-* `--verbose`：tqdmを使用して進捗バーを表示
+* `-m MODEL`, `--model MODEL`：利用するOllamaモデル名（デフォルト：`qwen3:30b-a3b`）
+* `--max-sentence-length N`：分析する1文あたりの最大文字数（デフォルト：80）
+* `--overwrite`：既存出力ファイルの上書き許可
+* `--verbose`：tqdmによる進捗バー表示
 
 ### 使用例
 
 ```bash
 keyphrase paper.pdf -O
-```
+# → paper.pdfを注釈し、paper-annotated.pdfとして出力
 
-* `paper.pdf`を色分け注釈し、`paper-annotated.pdf`として出力
-
-```bash
 keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100 --verbose
+# → notes.mdをhighlights.mdとして出力し、バッファ5000文字、最大文長100、進捗表示付きで処理
 ```
-
-* `notes.md`を`highlights.md`として出力し、バッファ5000文字、文の最大長100文字で処理、進捗バーを表示
 
 ## 必要要件
 
 * Python 3.10 以上
-* ローカルで動作する [Ollama](https://ollama.com/)
+* [Ollama](https://ollama.com/)（ローカルで稼働）
 * Ollamaで`qwen3:30b-a3b`モデルインストール済み（`ollama pull qwen3:30b-a3b`）
-* 必要な依存関係: blingfire, numpy, pymupdf, ollama, tqdm, pydantic
+* 必要な依存ライブラリ: blingfire, numpy, pymupdf, ollama, tqdm, pydantic
 
 ## ライセンス
 
 MIT
 
-## 注意
+## 注意事項
 
 * 本ツールは外部API等へのデータ送信を一切行わず、すべてローカルOllamaで処理されます。
-* 学術論文などでの利用時は、なるべくレイアウトが整理された高品質なPDF・Markdownをご利用ください。
-* Markdown出力は各文を`<span style="background-color:...">...</span>`で色付けします。
+* 学術論文等では、できるだけレイアウトが整った高品質なPDFやMarkdownをご利用ください。
+* Markdown出力では、各文が`<span style="background-color:...">...</span>`で色付けされます。
