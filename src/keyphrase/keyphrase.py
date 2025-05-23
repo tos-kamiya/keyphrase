@@ -10,16 +10,12 @@ from pydantic import BaseModel, ValidationError  # ValidationError をインポ�
 from tqdm import tqdm
 
 from .text_utils import extract_sentences, split_markdown_paragraphs
+from .color_utils import hex_to_float, InvalidHexColorCode
 
-COLOR_MAP: Dict[str, Tuple[float, float, float]] = {
-    "threat": (1, 1, 0),  # yellow
-    "experiment": (0, 1, 0),  # green
-    "approach": (0, 0.5, 1),  # blue
-}
-MD_COLOR_MAP: Dict[str, str] = {
-    "threat": "#f7e158",  # yellow
-    "experiment": "#27ae60",  # green
-    "approach": "#3498db",  # blue
+COLOR_MAP: Dict[str, str] = {
+    "threat": "#fec6afb0",
+    "experiment": "#d0fbb1b0",
+    "approach": "#8edefbb0",
 }
 
 
@@ -147,6 +143,7 @@ def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
 def process_buffered_pdf(
     doc: fitz.Document,
     buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
+    pdf_color_map: Dict[str, Tuple[float, float, float, float]],
     model: str,
 ) -> None:
     """
@@ -163,7 +160,7 @@ def process_buffered_pdf(
     labels = label_sentences(sentences, model)
 
     for (page_idx, sent_idx, sent), cat in zip(buffer, labels):
-        if not cat or cat not in COLOR_MAP:  # Ensure category is valid for highlighting
+        if not cat or cat not in pdf_color_map:  # Ensure category is valid for highlighting
             continue
         page = doc[page_idx]
 
@@ -174,9 +171,9 @@ def process_buffered_pdf(
         quads_found = False
         for quads in page.search_for(search_text):
             highlight = page.add_highlight_annot(quads)
-            r, g, b = COLOR_MAP[cat]
+            r, g, b, a = pdf_color_map[cat]
             highlight.set_colors({"stroke": (r, g, b)})
-            highlight.set_opacity(0.5)
+            highlight.set_opacity(a)
             highlight.update()
             quads_found = True
 
@@ -190,6 +187,7 @@ def process_buffered_pdf(
 def highlight_sentences_in_pdf(
     pdf_path: str,
     output_pdf_path: str,
+    color_map: Dict[str, str],
     model: str,
     buffer_size: int,
     max_sentence_length: int,
@@ -206,6 +204,7 @@ def highlight_sentences_in_pdf(
         max_sentence_length (int): Maximum length of each sentence.
         verbose (bool): If True, print progress.
     """
+    pdf_color_map = {k: hex_to_float(v) for k, v in color_map.items()}
     doc = fitz.open(pdf_path)
     buffer: List[Tuple[int, int, str]] = []
 
@@ -225,16 +224,16 @@ def highlight_sentences_in_pdf(
                 if len(sent) >= 5:
                     buffer.append((page_idx, idx, sent))
             if buffer_len_chars(buffer) >= buffer_size:
-                process_buffered_pdf(doc, buffer, model)
+                process_buffered_pdf(doc, buffer, pdf_color_map, model)
                 buffer.clear()
 
         # Process any remaining sentences in the buffer at the end of the page
         if buffer:
-            process_buffered_pdf(doc, buffer, model)
+            process_buffered_pdf(doc, buffer, pdf_color_map, model)
             buffer.clear()
 
     if buffer:  # This check is redundant due to page-level processing, but harmless.
-        process_buffered_pdf(doc, buffer, model)
+        process_buffered_pdf(doc, buffer, pdf_color_map, model)
         buffer.clear()
 
     doc.save(output_pdf_path, garbage=4)
@@ -244,6 +243,7 @@ def highlight_sentences_in_pdf(
 
 def process_buffered_md(
     buffer: List[Tuple[int, int, str]],  # (para_idx, sent_idx, sentence)
+    color_map: Dict[str, str],
     model: str,
 ) -> Dict[Tuple[int, int], str]:
     """
@@ -263,14 +263,15 @@ def process_buffered_md(
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
         # Ensure category is valid and has a corresponding color in MD_COLOR_MAP
-        if cat and cat in MD_COLOR_MAP:
-            highlights[(para_idx, sent_idx)] = f'<span style="background-color:{MD_COLOR_MAP[cat]}">{sent}</span>'
+        if cat and cat in color_map:
+            highlights[(para_idx, sent_idx)] = f'<span style="background-color:{COLOR_MAP[cat]}">{sent}</span>'
     return highlights
 
 
 def highlight_sentences_in_md(
     md_path: str,
     output_path: Optional[str],
+    color_map: Dict[str, str],
     model: str,
     buffer_size: int,
     max_sentence_length: int,
@@ -307,13 +308,13 @@ def highlight_sentences_in_md(
 
         # If buffer size threshold is reached, process the batch
         if buffer_len_chars(buffer) >= buffer_size:
-            batch_highlights = process_buffered_md(buffer, model)
+            batch_highlights = process_buffered_md(buffer, color_map, model)
             highlighted.update(batch_highlights)
             buffer.clear()
 
     # Process any remaining sentences in the buffer after all paragraphs are done
     if buffer:
-        highlighted.update(process_buffered_md(buffer, model))
+        highlighted.update(process_buffered_md(buffer, color_map, model))
         buffer.clear()
 
     # Reconstruct Markdown with highlighted sentences
@@ -412,6 +413,18 @@ def main() -> None:
     group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md).")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
     parser.add_argument(
+        "--color-map",
+        type=str,
+        action='append',
+        help=(
+            "Customize marker colors. "
+            "Format: 'name:#rgba' or 'name:#rrrggbbaa' (e.g., approach:#8edefbb0). "
+            "Supported names: approach, experiment, threat. "
+            "To disable a marker, use 'name:0' (e.g., threat:0). "
+            "Can be specified multiple times."
+        )
+    )
+    parser.add_argument(
         "--buffer-size",
         type=int,
         default=1500,
@@ -432,6 +445,27 @@ def main() -> None:
     )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
     args = parser.parse_args()
+
+    color_map = COLOR_MAP.copy()
+    if args.color_map:
+        for mapping in args.color_map:
+            marker_name, color_value = mapping.split(':')
+            if marker_name not in COLOR_MAP:
+                print(f"Error: invalid marker name: {marker_name}", file=sys.stderr)
+                sys.exit(1)
+
+            if color_value == '0':
+                color_map.pop(marker_name, None)
+            elif color_value.startswith('#'):
+                try:
+                    _v = hex_to_float(color_value)
+                except InvalidHexColorCode:
+                    print(f"Error: invalid RGB value: {color_value}", file=sys.stderr)
+                    sys.exit(1)
+                color_map[marker_name] = color_value
+            else:
+                print(f"Error: invalid RGB value: {color_value}", file=sys.stderr)
+                sys.exit(1)
 
     input_path: str = args.input
     try:
@@ -454,6 +488,7 @@ def main() -> None:
         highlight_sentences_in_pdf(
             input_path,
             output_path,
+            color_map=color_map,
             model=args.model,
             buffer_size=args.buffer_size,
             max_sentence_length=args.max_sentence_length,
@@ -463,6 +498,7 @@ def main() -> None:
         highlight_sentences_in_md(
             input_path,
             output_path,
+            color_map=color_map,
             model=args.model,
             buffer_size=args.buffer_size,
             max_sentence_length=args.max_sentence_length,
