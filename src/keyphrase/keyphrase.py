@@ -460,7 +460,7 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
 
 def main() -> None:
     # Check if --color-legend specified
-    legend_mode = any(arg == "--color-legend" for arg in sys.argv)
+    legend_mode = any(arg.startswith("--color-legend") for arg in sys.argv)
 
     # Color legend mode
     if legend_mode:
