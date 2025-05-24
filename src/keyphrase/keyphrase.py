@@ -10,13 +10,14 @@ from pydantic import BaseModel, ValidationError  # ValidationError をインポ�
 from tqdm import tqdm
 
 from .text_utils import extract_sentences, split_markdown_paragraphs
-from .color_utils import hex_to_float, InvalidHexColorCode
-
-COLOR_MAP: Dict[str, str] = {
-    "threat": "#fec6afb0",
-    "experiment": "#d0fbb1b0",
-    "approach": "#8edefbb0",
-}
+from .color_utils import (
+    DEFAULT_COLOR_MAP,
+    InvalidColorMap,
+    InvalidHexColorCode,
+    color_legend_str,
+    hex_to_float,
+    make_color_map,
+)
 
 
 def make_joint_category_prompt(numbered: List[str]) -> str:
@@ -264,7 +265,7 @@ def process_buffered_md(
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
         # Ensure category is valid and has a corresponding color in MD_COLOR_MAP
         if cat and cat in color_map:
-            highlights[(para_idx, sent_idx)] = f'<span style="background-color:{COLOR_MAP[cat]}">{sent}</span>'
+            highlights[(para_idx, sent_idx)] = f'<span style="background-color:{DEFAULT_COLOR_MAP[cat]}">{sent}</span>'
     return highlights
 
 
@@ -400,35 +401,28 @@ def detect_filetype(path: str) -> str:
     raise ValueError(f"Unknown file type for path: {path}. Supported types are .pdf and .md")
 
 
-def main() -> None:
+def build_parser(mode: str) -> argparse.ArgumentParser:
     """
-    Main entry point: parse arguments, dispatch to PDF or Markdown highlighter.
+    Build and return argparse.ArgumentParser for 'normal' or 'color_legend'.
     """
+    assert mode in ("normal", "color_legend")
+
     parser = argparse.ArgumentParser(
         description="Highlight key sentences in PDF or Markdown (AI-based color coding, heading-aware)"
     )
-    parser.add_argument("input", help="input PDF or Markdown file")
+
+    if mode != "color_legend":  # the input argument is required in normal mode, but not required in "legend" mode
+        parser.add_argument("input", help="Input PDF or Markdown file")
+
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-o", "--output", help="Output file. Use '-' for stdout (Markdown only).")
     group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md).")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
     parser.add_argument(
-        "--color-map",
-        type=str,
-        action='append',
-        help=(
-            "Customize marker colors. "
-            "Format: 'name:#rgba' or 'name:#rrrggbbaa' (e.g., approach:#8edefbb0). "
-            "Supported names: approach, experiment, threat. "
-            "To disable a marker, use 'name:0' (e.g., threat:0). "
-            "Can be specified multiple times."
-        )
-    )
-    parser.add_argument(
         "--buffer-size",
         type=int,
         default=1500,
-        help="Buffer size threshold for batch processing (measured in characters, default: 1500)",
+        help="Buffer size threshold for batch processing (characters, default: 1500)",
     )
     parser.add_argument(
         "--max-sentence-length",
@@ -441,31 +435,54 @@ def main() -> None:
         "--model",
         type=str,
         default="qwen3:30b-a3b",
-        help="LLM for identify key sentences (default: 'qwen3:30b-a3b').",
+        help="LLM for key sentence detection (default: 'qwen3:30b-a3b').",
+    )
+    parser.add_argument(
+        "--color-map",
+        type=str,
+        action="append",
+        help=(
+            "Customize marker colors. "
+            "Format: 'name:#rgba' or 'name:#rrrggbbaa' (e.g., approach:#8edefbb0). "
+            "Supported names: approach, experiment, threat. "
+            "To disable a marker, use 'name:0'."
+        ),
+    )
+    parser.add_argument(
+        "--color-legend",
+        choices=["text", "ansi", "html"],
+        required=True,
+        help="Output color legend in the specified format (text|ansi|html).",
     )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
+    return parser
+
+
+def main() -> None:
+    # Check if --color-legend specified
+    legend_mode = any(arg == "--color-legend" for arg in sys.argv)
+
+    # Color legend mode
+    if legend_mode:
+        parser = build_parser("color_legend")
+        args = parser.parse_args()
+        try:
+            color_map = make_color_map(DEFAULT_COLOR_MAP, args.color_map)
+        except InvalidColorMap | InvalidHexColorCode as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(color_legend_str(color_map, args.color_legend))
+        sys.exit(0)
+
+    # Normal mode
+    parser = build_parser("normal")
     args = parser.parse_args()
 
-    color_map = COLOR_MAP.copy()
-    if args.color_map:
-        for mapping in args.color_map:
-            marker_name, color_value = mapping.split(':')
-            if marker_name not in COLOR_MAP:
-                print(f"Error: invalid marker name: {marker_name}", file=sys.stderr)
-                sys.exit(1)
-
-            if color_value == '0':
-                color_map.pop(marker_name, None)
-            elif color_value.startswith('#'):
-                try:
-                    _v = hex_to_float(color_value)
-                except InvalidHexColorCode:
-                    print(f"Error: invalid RGB value: {color_value}", file=sys.stderr)
-                    sys.exit(1)
-                color_map[marker_name] = color_value
-            else:
-                print(f"Error: invalid RGB value: {color_value}", file=sys.stderr)
-                sys.exit(1)
+    try:
+        color_map = make_color_map(DEFAULT_COLOR_MAP, args.color_map)
+    except InvalidColorMap | InvalidHexColorCode as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     input_path: str = args.input
     try:
