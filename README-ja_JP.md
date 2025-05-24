@@ -79,21 +79,44 @@ keyphrase input.md
 * デフォルトは`out.pdf`または`out.md`
   既に同名ファイルが存在する場合は、`--overwrite`指定がないとエラー
 
-### 色のカスタマイズ
+### 色オプション
 
-各カテゴリごとのハイライト色は `--color-map` オプションで変更できます。
+各カテゴリのハイライト色は自由にカスタマイズ・プレビューできます。
 
+#### ハイライト色のカスタマイズ
+
+* `--color-map` オプションで各カテゴリの色を指定できます。
 * **書式**：`name:#rgba` または `name:#rrrggbbaa`（例：`approach:#8edefbb0`）
 * **指定可能なカテゴリ名**：`approach`, `experiment`, `threat`
 * 特定のマーカーを無効化したい場合は `name:0`（例：`threat:0`）
-* このオプションは複数回指定可能です
+* このオプションは複数回指定できます。
 
 **使用例：**
 
 ```bash
-# approachを赤色、experimentを青色、threatを無効化
-keyphrase input.pdf --color-map approach:#ff0000ff --color-map experiment:#0000ffff --color-map threat:0
+# approachを黄色、experimentをティール色、threatを無効化
+keyphrase input.pdf --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff --color-map threat:0
 ```
+
+#### 現在の色設定の確認（凡例出力）
+
+`--color-map` で設定した色をターミナル上で確認できます。
+色調整時に便利です。
+
+```bash
+keyphrase --color-legend text   # 凡例をプレーンテキストで表示
+keyphrase --color-legend ansi   # 24ビットカラー（背景＋黒文字）で表示
+keyphrase --color-legend html   # HTMLテーブル形式の凡例を表示（ドキュメント貼り付け用）
+```
+
+`--color-map` と組み合わせると、カスタム設定をプレビューできます：
+
+```bash
+keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff
+```
+
+* **ANSI出力**は背景色ブロック＋黒文字（24ビットカラー端末で推奨）
+* **HTML出力**はドキュメント等に貼り付け可能です
 
 ### バッチ／バッファ処理オプション
 

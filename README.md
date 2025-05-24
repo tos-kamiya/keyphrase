@@ -78,21 +78,44 @@ keyphrase input.md
 * By default, output will be `out.pdf` or `out.md`.
   If the file exists, an error is raised unless `--overwrite` is specified.
 
-### Color customization
+### Color options
 
-You can customize the highlight colors for each category using the `--color-map` option.
+You can fully customize and preview highlight colors for each category using the options below.
 
+#### Customizing highlight colors
+
+* Use `--color-map` to specify colors for each category.
 * **Format:** `name:#rgba` or `name:#rrrggbbaa` (e.g., `approach:#8edefbb0`)
 * **Available category names:** `approach`, `experiment`, `threat`
 * To disable a specific marker, specify `name:0` (e.g., `threat:0`)
-* This option can be used multiple times
+* This option can be used multiple times.
 
-**Examples:**
+**Example:**
 
 ```bash
-# Change 'approach' to red, 'experiment' to blue, and disable 'threat'
-keyphrase input.pdf --color-map approach:#ff0000ff --color-map experiment:#0000ffff --color-map threat:0
+# Change 'approach' to yellow, 'experiment' to teal, and disable 'threat'
+keyphrase input.pdf --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff --color-map threat:0
 ```
+
+#### Checking your current color settings (legend output)
+
+You can check the currently active highlight colors as a legend in your terminal.
+This is especially useful when adjusting colors with `--color-map`.
+
+```bash
+keyphrase --color-legend text   # Show legend as plain text
+keyphrase --color-legend ansi   # Show legend with 24-bit color blocks (background + black text)
+keyphrase --color-legend html   # Show legend as a compact HTML table snippet
+```
+
+You can combine this with `--color-map` to preview your custom color settings:
+
+```bash
+keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff
+```
+
+* **ANSI output** uses a background color block and black text for visibility (works best in 24-bit color terminals).
+* **HTML output** can be copy-pasted into documentation.
 
 ### Batch/Buffering options
 
