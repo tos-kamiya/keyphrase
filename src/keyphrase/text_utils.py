@@ -1,8 +1,6 @@
 import re
-from typing import List, Optional
+from typing import Iterator, List, Optional
 import unicodedata
-
-import blingfire
 
 
 def split_markdown_paragraphs(md_text: str) -> List[str]:
@@ -131,11 +129,19 @@ def split_by_punct_character(text: str, sentence_max_length: int) -> List[str]:
     return merged_phrases
 
 
-def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[str]:
-    normalized = paragraph.replace("．", "。")
-    sents_text = blingfire.text_to_sentences(normalized)
+_sat_instance = None
 
-    sents = [s.strip() for s in sents_text.split("\n") if s.strip()]
+def get_sat():
+    global _sat_instance
+    if _sat_instance is None:
+        from wtpsplit import SaT
+        _sat_instance = SaT("sat-3l")
+    return _sat_instance
+
+
+def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[str]:
+    sat = get_sat()
+    sents = [s.strip() for s in sat.split(paragraph) if s.strip()]
     r = []
     for s in sents:
         if len(s) <= sentence_max_length:
@@ -144,3 +150,19 @@ def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[st
             phrases = split_by_punct_character(s, sentence_max_length)
             r.extend(phrases)
     return r
+
+
+def extract_sentences_iter(paragraphs: List[str], sentence_max_length: int = 100) -> Iterator[List[str]]:
+    sat = get_sat()
+    split_results = sat.split(paragraphs)
+    for sr in split_results:
+        sents = [s.strip() for s in sr if s.strip()]
+        r = []
+        for s in sents:
+            if len(s) <= sentence_max_length:
+                r.append(s)
+            else:
+                phrases = split_by_punct_character(s, sentence_max_length)
+                r.extend(phrases)
+        yield r
+

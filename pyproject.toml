@@ -21,7 +21,8 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-  "blingfire",
+  "wtpsplit",
+  "torch",
   "numpy",
   "pymupdf",
   "ollama",

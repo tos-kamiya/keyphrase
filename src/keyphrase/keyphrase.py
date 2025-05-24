@@ -9,7 +9,7 @@ import ollama
 from pydantic import BaseModel, ValidationError  # ValidationError をインポート
 from tqdm import tqdm
 
-from .text_utils import extract_sentences, split_markdown_paragraphs
+from .text_utils import extract_sentences, extract_sentences_iter, split_markdown_paragraphs
 from .color_utils import (
     DEFAULT_COLOR_MAP,
     InvalidColorMap,
@@ -165,7 +165,7 @@ def process_buffered_pdf(
             continue
         page = doc[page_idx]
 
-        search_text = sent.replace("。", "").strip()
+        search_text = sent.strip()
         if not search_text:  # Avoid searching for empty strings
             continue
 
@@ -219,8 +219,7 @@ def highlight_sentences_in_pdf(
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
 
         # Ensure that the last batch in a page is also processed
-        for para in paragraphs:
-            sentences = extract_sentences(para, max_sentence_length)
+        for sentences in extract_sentences_iter(paragraphs, max_sentence_length):
             for idx, sent in enumerate(sentences):
                 if len(sent) >= 5:
                     buffer.append((page_idx, idx, sent))
@@ -296,14 +295,19 @@ def highlight_sentences_in_md(
     buffer: List[Tuple[int, int, str]] = []
     highlighted: Dict[Tuple[int, int], str] = {}
 
+    # Prepare paragraph -> sentences table
+    paragraph_sentences_data: List[Tuple[int, List[str]]] = []
+    for p_idx, para in enumerate(paragraphs):
+        sentences = extract_sentences(para, max_sentence_length)
+        paragraph_sentences_data.append((p_idx, sentences))
+
     if verbose:
-        it = tqdm(paragraphs, unit="paragraph")
+        it = tqdm(paragraph_sentences_data, unit="paragraph")
     else:
-        it = paragraphs
+        it = paragraph_sentences_data
 
     # Process paragraphs and buffer sentences
-    for p_idx, para in enumerate(it):
-        sentences = extract_sentences(para, max_sentence_length)
+    for p_idx, sentences in it:
         for s_idx, sent in enumerate(sentences):
             buffer.append((p_idx, s_idx, sent))
 
@@ -320,8 +324,7 @@ def highlight_sentences_in_md(
 
     # Reconstruct Markdown with highlighted sentences
     highlighted_paragraphs: List[str] = []
-    for p_idx, para in enumerate(paragraphs):
-        sentences = extract_sentences(para, max_sentence_length)
+    for p_idx, sentences in paragraph_sentences_data:
         new_sents: List[str] = []
         for s_idx, sent in enumerate(sentences):
             # If a sentence is highlighted, use the highlighted HTML; otherwise, use the original sentence
