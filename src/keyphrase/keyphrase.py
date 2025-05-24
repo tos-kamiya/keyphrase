@@ -9,7 +9,7 @@ import ollama
 from pydantic import BaseModel, ValidationError  # ValidationError をインポート
 from tqdm import tqdm
 
-from .text_utils import extract_sentences, extract_sentences_iter, split_markdown_paragraphs
+from .text_utils import extract_sentences_iter, split_markdown_paragraphs, unload_sentence_splitting_model
 from .color_utils import (
     DEFAULT_COLOR_MAP,
     InvalidColorMap,
@@ -209,17 +209,29 @@ def highlight_sentences_in_pdf(
     doc = fitz.open(pdf_path)
     buffer: List[Tuple[int, int, str]] = []
 
+    if verbose:
+        print(f"Split sentences ...", file=sys.stderr)
+    page_paragraph_sentences_data: Dict[int, List[Tuple[int, List[str]]]] = dict()
+    for page_idx, page in enumerate(doc):
+        page_text = page.get_text()
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
+        paragraph_sentences_data: List[Tuple[int, List[str]]] = list(
+            enumerate(extract_sentences_iter(paragraphs, max_sentence_length))
+        )
+        page_paragraph_sentences_data[page_idx] = paragraph_sentences_data
+    unload_sentence_splitting_model()
+
     pages = list(doc)
     if verbose:
-        it = tqdm(pages, unit="page")
+        it = tqdm(pages, unit="page", desc="Key Extraction")
     else:
         it = pages
     for page_idx, page in enumerate(it):
         page_text = page.get_text()
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
+        paragraph_sentences_data = page_paragraph_sentences_data[page_idx]
 
         # Ensure that the last batch in a page is also processed
-        for sentences in extract_sentences_iter(paragraphs, max_sentence_length):
+        for p_idx, sentences in paragraph_sentences_data:
             for idx, sent in enumerate(sentences):
                 if len(sent) >= 5:
                     buffer.append((page_idx, idx, sent))
@@ -296,13 +308,15 @@ def highlight_sentences_in_md(
     highlighted: Dict[Tuple[int, int], str] = {}
 
     # Prepare paragraph -> sentences table
-    paragraph_sentences_data: List[Tuple[int, List[str]]] = []
-    for p_idx, para in enumerate(paragraphs):
-        sentences = extract_sentences(para, max_sentence_length)
-        paragraph_sentences_data.append((p_idx, sentences))
+    if verbose:
+        print(f"Split sentences ...", file=sys.stderr)
+    paragraph_sentences_data: List[Tuple[int, List[str]]] = list(
+        enumerate(extract_sentences_iter(paragraphs, max_sentence_length))
+    )
+    unload_sentence_splitting_model()
 
     if verbose:
-        it = tqdm(paragraph_sentences_data, unit="paragraph")
+        it = tqdm(paragraph_sentences_data, unit="paragraph", desc="Key Extraction")
     else:
         it = paragraph_sentences_data
 
@@ -424,14 +438,14 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--buffer-size",
         type=int,
-        default=1500,
-        help="Buffer size threshold for batch processing (characters, default: 1500)",
+        default=1300,
+        help="Buffer size threshold for batch processing (characters, default: 1300)",
     )
     parser.add_argument(
         "--max-sentence-length",
         type=int,
-        default=80,
-        help="Maximum length of each sentence for analysis (default: 80)",
+        default=120,
+        help="Maximum length of each sentence for analysis (default: 120)",
     )
     parser.add_argument(
         "-m",

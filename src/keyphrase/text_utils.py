@@ -139,6 +139,11 @@ def get_sat():
     return _sat_instance
 
 
+def unload_sentence_splitting_model():
+    global _sat_instance
+    _sat_instance = None
+
+
 def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[str]:
     sat = get_sat()
     sents = [s.strip() for s in sat.split(paragraph) if s.strip()]
