@@ -213,8 +213,8 @@ def highlight_sentences_in_pdf(
         print(f"Split sentences ...", file=sys.stderr)
     page_paragraph_sentences_data: Dict[int, List[Tuple[int, List[str]]]] = dict()
     for page_idx, page in enumerate(doc):
-        page_text = page.get_text()
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", page_text) if p.strip()]
+        blocks = page.get_text("blocks")
+        paragraphs = [b[4].strip() for b in blocks if b[6] == 0 and b[4].strip()]
         paragraph_sentences_data: List[Tuple[int, List[str]]] = list(
             enumerate(extract_sentences_iter(paragraphs, max_sentence_length))
         )
@@ -227,7 +227,6 @@ def highlight_sentences_in_pdf(
     else:
         it = pages
     for page_idx, page in enumerate(it):
-        page_text = page.get_text()
         paragraph_sentences_data = page_paragraph_sentences_data[page_idx]
 
         # Ensure that the last batch in a page is also processed
