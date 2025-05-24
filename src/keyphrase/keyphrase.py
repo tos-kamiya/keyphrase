@@ -451,7 +451,6 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--color-legend",
         choices=["text", "ansi", "html"],
-        required=True,
         help="Output color legend in the specified format (text|ansi|html).",
     )
     parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
