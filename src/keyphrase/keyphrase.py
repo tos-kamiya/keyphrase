@@ -170,20 +170,16 @@ def process_buffered_pdf(
         if not search_text:  # Avoid searching for empty strings
             continue
 
-        quads_found = False
-        for quads in page.search_for(search_text):
-            highlight = page.add_highlight_annot(quads)
+        quads = page.search_for(search_text)
+        if len(quads) == 1:
+            highlight = page.add_highlight_annot(quads[0])
             r, g, b, a = pdf_color_map[cat]
             highlight.set_colors({"stroke": (r, g, b)})
             highlight.set_opacity(a)
             highlight.update()
-            quads_found = True
-
-        if not quads_found and sys.stderr.isatty():  # Only print warning if actually interactiving
-            # This warning can be noisy for complex PDFs.
-            # Only enable if debugging search issues.
-            # print(f"Warning: Could not find sentence '{sent}' (sanitized to '{search_text}') on page {page_idx+1} for category '{cat}'.", file=sys.stderr)
-            pass
+        elif len(quads) == 0:
+            if sys.stderr.isatty():
+                print(f"Warning: '{search_text}' not found on page {page_idx+1}.", file=sys.stderr)
 
 
 def highlight_sentences_in_pdf(
