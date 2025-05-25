@@ -22,7 +22,8 @@ from .color_utils import (
 
 def make_joint_category_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
-        "Below are numbered sentences from a scientific paper paragraph.\n"
+        "Below are numbered sentences, presented in their original order as consecutive lines from a scientific paper paragraph. "
+        "Each sentence should be interpreted in the context of the surrounding sentences.\n"
         "For each of the following categories, select a small number of sentences that, when combined, would best summarize that category's key points in the paragraph. "
         "When judging which category a sentence belongs to, consider the context provided by the surrounding sentences.\n"
         "\n"
