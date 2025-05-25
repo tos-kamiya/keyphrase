@@ -279,6 +279,10 @@ def process_buffered_md(
     return highlights
 
 
+def has_base64_image(paragraph: str) -> bool:
+    return re.search(r'!\[.*?\]\(\s*data:image/[^)]+\)', paragraph, re.DOTALL) is not None
+
+
 def highlight_sentences_in_md(
     md_path: str,
     output_path: Optional[str],
@@ -301,6 +305,9 @@ def highlight_sentences_in_md(
     """
     with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
+    if has_base64_image(content):
+        print("Error: the Markdown file contains base64-encoded images.", file=sys.stderr)
+        sys.exit(1)
     paragraphs = split_markdown_paragraphs(content)
 
     buffer: List[Tuple[int, int, str]] = []
