@@ -144,9 +144,17 @@ def unload_sentence_splitting_model():
     _sat_instance = None
 
 
+def remove_control_characters(s: str) -> str:
+    return re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', s)
+
+
 def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[str]:
+    p = remove_control_characters(paragraph).strip()
+    if not p:
+        return []
+
     sat = get_sat()
-    sents = [s.strip() for s in sat.split(paragraph) if s.strip()]
+    sents = [s.strip() for s in sat.split(p) if s.strip()]
     r = []
     for s in sents:
         if len(s) <= sentence_max_length:
@@ -158,8 +166,14 @@ def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[st
 
 
 def extract_sentences_iter(paragraphs: List[str], sentence_max_length: int = 100) -> Iterator[List[str]]:
+    cleaned_paragraphs = []
+    for p in paragraphs:
+        p = remove_control_characters(p).strip()
+        if p:
+            cleaned_paragraphs.append(p)
+
     sat = get_sat()
-    split_results = sat.split(paragraphs)
+    split_results = sat.split(cleaned_paragraphs)
     for sr in split_results:
         sents = [s.strip() for s in sr if s.strip()]
         r = []
