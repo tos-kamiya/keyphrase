@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Tuple
 
 import fitz  # PyMuPDF
 import ollama
-from pydantic import BaseModel, ValidationError  # ValidationError をインポート
+from pydantic import BaseModel, ValidationError
 from tqdm import tqdm
 
 from .text_utils import extract_sentences_iter, split_markdown_paragraphs, unload_sentence_splitting_model
@@ -277,7 +277,7 @@ def process_buffered_md(
 
 
 def has_base64_image(paragraph: str) -> bool:
-    return re.search(r'!\[.*?\]\(\s*data:image/[^)]+\)', paragraph, re.DOTALL) is not None
+    return re.search(r"!\[.*?\]\(\s*data:image/[^)]+\)", paragraph, re.DOTALL) is not None
 
 
 def highlight_sentences_in_md(

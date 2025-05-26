@@ -122,4 +122,3 @@ def color_legend_str(color_map: Dict[str, str], mode: str) -> str:
     else:
         assert False, f"invalid mode value: {mode}"
     return "\n".join(lines)
-

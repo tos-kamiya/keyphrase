@@ -131,10 +131,12 @@ def split_by_punct_character(text: str, sentence_max_length: int) -> List[str]:
 
 _sat_instance = None
 
+
 def get_sat():
     global _sat_instance
     if _sat_instance is None:
         from wtpsplit import SaT
+
         _sat_instance = SaT("sat-3l")
     return _sat_instance
 
@@ -145,7 +147,7 @@ def unload_sentence_splitting_model():
 
 
 def remove_control_characters(s: str) -> str:
-    return re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', s)
+    return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]", "", s)
 
 
 def extract_sentences(paragraph: str, sentence_max_length: int = 100) -> List[str]:
@@ -184,4 +186,3 @@ def extract_sentences_iter(paragraphs: List[str], sentence_max_length: int = 100
                 phrases = split_by_punct_character(s, sentence_max_length)
                 r.extend(phrases)
         yield r
-
