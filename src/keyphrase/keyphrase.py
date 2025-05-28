@@ -177,6 +177,11 @@ def process_buffered_pdf(
         if not search_text:  # Avoid searching for empty strings
             continue
 
+        # If a hyphen used to indicate a continuation line is present at the end of a line, the search will fail.
+        # Delete it in advance before performing the search.
+        if len(search_text) >= 2:
+            search_text = re.sub(r"[-]+\s*$", "", search_text)
+
         quads = page.search_for(search_text)
         if len(quads) == 1:
             highlight = page.add_highlight_annot(quads[0])
