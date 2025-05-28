@@ -58,7 +58,7 @@ class JointImportantPhrases(BaseModel):
     reference: List[int]
 
 
-def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
+def label_sentences(sentences: List[str], model: str, debug: bool = False) -> List[Optional[str]]:
     """
     Assign a category label to each sentence using LLM.
     The strategy is to try LLM multiple times and select the response
@@ -78,14 +78,24 @@ def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
     num_retries = 3
     for i in range(num_retries):
         prompt = make_joint_category_prompt(numbered)
-        response = None
+        if debug:
+            print("[Debug] prompt", file=sys.stderr)
+            for line in prompt.split("\n"):
+                print(f"> {line}", file=sys.stderr)
+        content: Optional[str] = None
         try:
             response = ollama.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 format=JointImportantPhrases.model_json_schema(),
             )
-            result = JointImportantPhrases.model_validate_json(response.message.content)
+            content = response.message.content
+            assert content is not None
+            if debug:
+                print("[Debug] response", file=sys.stderr)
+                for line in content.split("\n"):
+                    print(f"> {line}", file=sys.stderr)
+            result = JointImportantPhrases.model_validate_json(content)
 
             size = len(result.approach) + len(result.experiment) + len(result.threat)
             cat_indices_map = {
@@ -95,13 +105,9 @@ def label_sentences(sentences: List[str], model: str) -> List[Optional[str]]:
             }
             maps.append((size, cat_indices_map))
         except ValidationError as e:
-            assert response is not None
+            assert content is not None
             print(f"Warning: LLM returned invalid JSON schema on attempt {i + 1}: {e}", file=sys.stderr)
-            print(f"LLM response content: {response.message.content}", file=sys.stderr)
-        except Exception as e:
-            print(f"Warning: LLM chat call failed on attempt {i + 1}: {e}", file=sys.stderr)
-            if "response" in locals() and response and hasattr(response, "message"):
-                print(f"LLM response content (if available): {response.message.content}", file=sys.stderr)
+            print(f"LLM response content: {content}", file=sys.stderr)
 
     if not maps:
         print(
@@ -147,6 +153,7 @@ def process_buffered_pdf(
     buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
     pdf_color_map: Dict[str, Tuple[float, float, float, float]],
     model: str,
+    debug: bool = False
 ) -> None:
     """
     Process a batch (buffer) of sentences for a PDF, highlighting sentences according to category.
@@ -159,7 +166,7 @@ def process_buffered_pdf(
     sentences = [item[2] for item in buffer]
 
     # Batch label and annotate
-    labels = label_sentences(sentences, model)
+    labels = label_sentences(sentences, model, debug=debug)
 
     for (page_idx, sent_idx, sent), cat in zip(buffer, labels):
         if not cat or cat not in pdf_color_map:  # Ensure category is valid for highlighting
@@ -190,6 +197,7 @@ def highlight_sentences_in_pdf(
     buffer_size: int,
     max_sentence_length: int,
     verbose: bool = False,
+    debug: bool = False,
 ) -> None:
     """
     Highlight important sentences in a PDF file using the LLM.
@@ -232,16 +240,16 @@ def highlight_sentences_in_pdf(
                 if len(sent) >= 5:
                     buffer.append((page_idx, idx, sent))
             if buffer_len_chars(buffer) >= buffer_size:
-                process_buffered_pdf(doc, buffer, pdf_color_map, model)
+                process_buffered_pdf(doc, buffer, pdf_color_map, model, debug=debug)
                 buffer.clear()
 
         # Process any remaining sentences in the buffer at the end of the page
         if buffer:
-            process_buffered_pdf(doc, buffer, pdf_color_map, model)
+            process_buffered_pdf(doc, buffer, pdf_color_map, model, debug=debug)
             buffer.clear()
 
     if buffer:  # This check is redundant due to page-level processing, but harmless.
-        process_buffered_pdf(doc, buffer, pdf_color_map, model)
+        process_buffered_pdf(doc, buffer, pdf_color_map, model, debug=debug)
         buffer.clear()
 
     doc.save(output_pdf_path, garbage=4)
@@ -253,6 +261,7 @@ def process_buffered_md(
     buffer: List[Tuple[int, int, str]],  # (para_idx, sent_idx, sentence)
     color_map: Dict[str, str],
     model: str,
+    debug: bool = False,
 ) -> Dict[Tuple[int, int], str]:
     """
     Process a batch (buffer) of sentences for a Markdown file, returning highlights as HTML spans.
@@ -267,7 +276,7 @@ def process_buffered_md(
     sentences = [item[2] for item in buffer]
 
     # Batch label and collect highlights
-    labels = label_sentences(sentences, model)
+    labels = label_sentences(sentences, model, debug=debug)
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
         # Ensure category is valid and has a corresponding color in MD_COLOR_MAP
@@ -288,6 +297,7 @@ def highlight_sentences_in_md(
     buffer_size: int,
     max_sentence_length: int,
     verbose: bool = False,
+    debug: bool = False,
 ) -> None:
     """
     Highlight important sentences in a Markdown file using the LLM.
@@ -330,13 +340,13 @@ def highlight_sentences_in_md(
 
         # If buffer size threshold is reached, process the batch
         if buffer_len_chars(buffer) >= buffer_size:
-            batch_highlights = process_buffered_md(buffer, color_map, model)
+            batch_highlights = process_buffered_md(buffer, color_map, model, debug=debug)
             highlighted.update(batch_highlights)
             buffer.clear()
 
     # Process any remaining sentences in the buffer after all paragraphs are done
     if buffer:
-        highlighted.update(process_buffered_md(buffer, color_map, model))
+        highlighted.update(process_buffered_md(buffer, color_map, model, debug=debug))
         buffer.clear()
 
     # Reconstruct Markdown with highlighted sentences
@@ -422,58 +432,57 @@ def detect_filetype(path: str) -> str:
 
 
 def build_parser(mode: str) -> argparse.ArgumentParser:
-    """
-    Build and return argparse.ArgumentParser for 'normal' or 'color_legend'.
-    """
     assert mode in ("normal", "color_legend")
-
     parser = argparse.ArgumentParser(
         description="Highlight key sentences in PDF or Markdown (AI-based color coding, heading-aware)"
     )
 
-    if mode != "color_legend":  # the input argument is required in normal mode, but not required in "legend" mode
+    if mode != "color_legend":
         parser.add_argument("input", help="Input PDF or Markdown file")
 
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("-o", "--output", help="Output file. Use '-' for stdout (Markdown only).")
-    group.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md).")
+    group1 = parser.add_mutually_exclusive_group()
+    group1.add_argument("-o", "--output", help="Output file. Use '-' for stdout (Markdown only).")
+    group1.add_argument("-O", "--output-auto", action="store_true", help="Output to INPUT-annotated.(pdf|md).")
+
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
     parser.add_argument(
-        "--buffer-size",
-        type=int,
-        default=1300,
+        "--buffer-size", type=int, default=1300,
         help="Buffer size threshold for batch processing (characters, default: 1300)",
     )
     parser.add_argument(
-        "--max-sentence-length",
-        type=int,
-        default=120,
+        "--max-sentence-length", type=int, default=120,
         help="Maximum length of each sentence for analysis (default: 120)",
     )
     parser.add_argument(
-        "-m",
-        "--model",
-        type=str,
-        default="qwen3:30b-a3b",
+        "-m", "--model", type=str, default="qwen3:30b-a3b",
         help="LLM for key sentence detection (default: 'qwen3:30b-a3b').",
     )
     parser.add_argument(
-        "--color-map",
-        type=str,
-        action="append",
-        help=(
-            "Customize marker colors. "
-            "Format: 'name:#rgba' or 'name:#rrrggbbaa' (e.g., approach:#8edefbb0). "
-            "Supported names: approach, experiment, threat. "
-            "To disable a marker, use 'name:0'."
-        ),
+        "--color-map", type=str, action="append",
+        help="Customize marker colors. Format: 'name:#rgba' or 'name:#rrrggbbaa'.",
     )
     parser.add_argument(
-        "--color-legend",
-        choices=["text", "ansi", "html"],
+        "--color-legend", choices=["text", "ansi", "html"],
         help="Output color legend in the specified format (text|ansi|html).",
     )
-    parser.add_argument("--verbose", action="store_true", help="Show progress bar with tqdm.")
+
+    group2 = parser.add_mutually_exclusive_group()
+    group2.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress progress output (disable verbose)."
+    )
+    group2.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output (prompt/response) and progress bar."
+    )
+    group2.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable progress bar (default)."
+    )
+
     return parser
 
 
@@ -496,6 +505,9 @@ def main() -> None:
     # Normal mode
     parser = build_parser("normal")
     args = parser.parse_args()
+
+    verbose = not args.quiet or args.debug or args.verbose
+    debug = args.debug
 
     try:
         color_map = make_color_map(DEFAULT_COLOR_MAP, args.color_map)
@@ -528,7 +540,8 @@ def main() -> None:
             model=args.model,
             buffer_size=args.buffer_size,
             max_sentence_length=args.max_sentence_length,
-            verbose=args.verbose,
+            verbose=verbose,
+            debug=debug,
         )
     elif filetype == "md":
         highlight_sentences_in_md(
@@ -538,7 +551,8 @@ def main() -> None:
             model=args.model,
             buffer_size=args.buffer_size,
             max_sentence_length=args.max_sentence_length,
-            verbose=args.verbose,
+            verbose=verbose,
+            debug=debug,
         )
     else:
         print("Unknown file type", file=sys.stderr)
