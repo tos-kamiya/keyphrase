@@ -99,6 +99,26 @@ def label_sentences(
     Returns:
         List[Optional[str]]: List of category label of each sentence or None.
     """
+
+    def extract_labels(result):
+        labels: List[Optional[str]] = [None] * len(sentences)
+        category_data = result.model_dump()
+        for cat, idxs in category_data.items():
+            if cat == 'reference':
+                continue
+            for idx in idxs:
+                if 0 <= idx < len(sentences) and labels[idx] is None:
+                    labels[idx] = cat
+
+        # Remove the items categorized as references
+        for cat, idxs in category_data.items():
+            if cat == 'reference':
+                for idx in idxs:
+                    if 0 <= idx < len(sentences):
+                        labels[idx] = None
+
+        return labels
+
     numbered = [f"{idx}: {s}" for idx, s in enumerate(sentences)]
     content: Optional[str] = None
 
@@ -113,6 +133,7 @@ def label_sentences(
     else:
         raise ValueError(f"Unknown extraction mode: {extraction}")
 
+    labels_extracted: List[List[Optional[str]]] = []
     num_retries = 3
     for i in range(num_retries):
         if debug:
@@ -132,28 +153,24 @@ def label_sentences(
                 for line in content.split("\n"):
                     print(f"> {line}", file=sys.stderr)
             result = validator(content)
+            labels_extracted.append(extract_labels(result))
 
         except ValidationError as e:
             assert content is not None
             print(f"Warning: LLM returned invalid JSON schema on attempt {i + 1}: {e}", file=sys.stderr)
             print(f"LLM response content: {content}", file=sys.stderr)
 
-    labels: List[Optional[str]] = [None] * len(sentences)
-    category_data = result.model_dump()
-    for cat, idxs in category_data.items():
-        if cat == 'reference':
-            continue
-        for idx in idxs:
-            if 0 <= idx < len(sentences) and labels[idx] is None:
-                labels[idx] = cat
-
-    # Remove the items categorized as references
-    for cat, idxs in category_data.items():
-        if cat == 'reference':
-            for idx in idxs:
-                if 0 <= idx < len(sentences):
-                    labels[idx] = None
-
+    required_vote = len(labels_extracted) // 2 + 1
+    labels = []
+    for lbls in zip(*labels_extracted):
+        for lbl in lbls:
+            if lbl is None:
+                continue
+            if lbls.count(lbl) >= required_vote:
+                labels.append(lbl)
+                break  # for lbl
+        else:
+            labels.append(None)
     return labels
 
 
@@ -218,6 +235,53 @@ def process_buffered_pdf(
                 print(f"Warning: '{search_text}' not found on page {page_idx+1}.", file=sys.stderr)
 
 
+def expand_rect(rect: fitz.Rect, margin: float) -> fitz.Rect:
+    """
+    Expand a rectangle by a given margin in all directions.
+    """
+    return fitz.Rect(
+        rect.x0 - margin,
+        rect.y0 - margin,
+        rect.x1 + margin,
+        rect.y1 + margin,
+    )
+
+
+def extract_nonfigure_blocks(page: fitz.Page, margin: float = 5.0) -> List[Tuple]:
+    """
+    Extract text blocks from a PDF page that do not overlap with any image areas.
+
+    Parameters:
+        page (fitz.Page): The PDF page to process.
+        margin (float): Extra padding (in points) around each image when checking for overlap.
+
+    Returns:
+        List[Tuple]: A list of text blocks in the same format as `page.get_text("blocks")`,
+                     excluding those that intersect with image regions.
+    """
+    # Get image rectangles from the page dictionary
+    image_rects = []
+    page_dict = page.get_text("dict")
+    for block in page_dict["blocks"]:
+        if block["type"] == 1 and "bbox" in block:
+            rect = fitz.Rect(block["bbox"])
+            image_rects.append(expand_rect(rect, margin))
+
+    # Get all text blocks and exclude those that overlap with any image rect
+    nonfigure_blocks = []
+    for block in page.get_text("blocks"):
+        if block[6] != 0:
+            continue  # Not a text block
+
+        text_rect = fitz.Rect(block[:4])
+        if any(text_rect.intersects(img_rect) for img_rect in image_rects):
+            continue
+
+        nonfigure_blocks.append(block)
+
+    return nonfigure_blocks
+
+
 def highlight_sentences_in_pdf(
     pdf_path: str,
     output_pdf_path: str,
@@ -249,7 +313,7 @@ def highlight_sentences_in_pdf(
         print(f"Split sentences ...", file=sys.stderr)
     page_paragraph_sentences_data: Dict[int, List[Tuple[int, List[str]]]] = dict()
     for page_idx, page in enumerate(doc):
-        blocks = page.get_text("blocks")
+        blocks = extract_nonfigure_blocks(page)
         paragraphs = [b[4].strip() for b in blocks if b[6] == 0 and b[4].strip()]
         paragraph_sentences_data: List[Tuple[int, List[str]]] = list(
             enumerate(extract_sentences_iter(paragraphs, max_sentence_length))
