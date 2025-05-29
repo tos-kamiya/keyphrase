@@ -1,4 +1,5 @@
 import argparse
+from collections import Counter
 import os
 import re
 import sys
@@ -161,17 +162,9 @@ def label_sentences(
         print("Warning: LLM returned invalid JSON schema on all attempts; skipping highlights.", file=sys.stderr)
         return [None] * len(sentences)
     else:
+        lvs = [Counter(lbls).most_common()[0] for lbls in zip(*labels_extracted)]
         required_vote = len(labels_extracted) // 2 + 1
-        labels = []
-        for lbls in zip(*labels_extracted):
-            for lbl in lbls:
-                if lbl is None:
-                    continue
-                if lbls.count(lbl) >= required_vote:
-                    labels.append(lbl)
-                    break  # for lbl
-            else:
-                labels.append(None)
+        labels = [(lbl if votes >= required_vote else None) for lbl, votes in lvs]
         return labels
 
 
