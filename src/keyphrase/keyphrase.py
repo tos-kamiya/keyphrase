@@ -65,7 +65,7 @@ def make_skim_prompt(numbered: List[str]) -> str:
         "From the numbered list of sentences below, identify the **key sentences** that are essential for skimming:\n"
         "- These should include: the paper's motivation, main contributions, proposed method (in brief), and key findings or results.\n"
         "- Avoid detailed implementation or background unless essential to understanding the novelty.\n"
-        "- Select no more than *10 sentences** in total.\n"
+        "- Select no more than **10 sentences** in total.\n"
         "- Also list reference or bibliography sentences, typically listing prior work or sources cited in the paper.\n"
         "Example:\n"
         '{\n  "skim": [0, 3, 5],\n  "reference": [2, 8]\n}\n'
@@ -80,7 +80,7 @@ class Skim(BaseModel):
 
 
 def label_sentences(
-    sentences: List[str], model: str, extraction: str = "aetr", debug: bool = False  # 'aetr' or 'k'
+    sentences: List[str], model: str, extraction: str = "aetr", debug: bool = False
 ) -> List[Optional[str]]:
     """
     Assign a category label to each sentence using LLM.
@@ -373,9 +373,10 @@ def process_buffered_md(
     labels = label_sentences(sentences, model, extraction=extraction, debug=debug)
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
-        # Ensure category is valid and has a corresponding color in MD_COLOR_MAP
+        # Ensure category is valid and has a corresponding color in color_map
         if cat and cat in color_map:
-            highlights[(para_idx, sent_idx)] = f'<span style="background-color:{DEFAULT_COLOR_MAP[cat]}">{sent}</span>'
+            css_color = color_map[cat]
+            highlights[(para_idx, sent_idx)] = f'<span style="background-color:{css_color}">{sent}</span>'
     return highlights
 
 
