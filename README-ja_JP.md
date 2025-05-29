@@ -61,7 +61,7 @@ PDFの場合：
 keyphrase input.pdf
 ```
 
-* `input.pdf`を注釈し、`out.pdf`（未作成なら）として出力
+* `input.pdf` を注釈し、`out.pdf`（未作成なら）として出力します。
 
 Markdownの場合：
 
@@ -69,74 +69,80 @@ Markdownの場合：
 keyphrase input.md
 ```
 
-* `input.md`を注釈し、`out.md`としてHTML `<span>`タグでハイライト出力
+* `input.md` を注釈し、`out.md` として HTML の `<span>` タグでハイライトを付けて出力します。
 
-### 出力ファイル名のオプション
+### 出力オプション
 
 * `-o OUTPUT`, `--output OUTPUT`：出力ファイル名を指定
-  `-o -`を指定すると標準出力（Markdownのみ対応）
-* `-O`, `--output-auto`：`INPUT-annotated.pdf`または`INPUT-annotated.md`として自動命名
-* デフォルトは`out.pdf`または`out.md`
-  既に同名ファイルが存在する場合は、`--overwrite`指定がないとエラー
+  `-o -` を指定すると標準出力へ出力（Markdownのみ対応）
 
-### 色オプション
+* `-O`, `--output-auto`：`INPUT-annotated.pdf` または `INPUT-annotated.md` として自動命名
 
-各カテゴリのハイライト色は自由にカスタマイズ・プレビューできます。
+* デフォルトは `out.pdf` または `out.md`
+  同名ファイルがすでに存在する場合、`--overwrite` がないとエラーになります。
+
+* `--overwrite`：出力ファイルが既に存在していても上書きします。
+
+### 色に関するオプション
+
+カテゴリごとのハイライト色は自由にカスタマイズ可能で、プレビューも行えます。
 
 #### ハイライト色のカスタマイズ
 
-* `--color-map` オプションで各カテゴリの色を指定できます。
-* **書式**：`name:#rgba` または `name:#rrrggbbaa`（例：`approach:#8edefbb0`）
+* `--color-map` オプションで各カテゴリに色を割り当てます。
+* **形式**：`name:#rgba` または `name:#rrrggbbaa`（例：`approach:#8edefbb0`）
 * **指定可能なカテゴリ名**：`approach`, `experiment`, `threat`
-* 特定のマーカーを無効化したい場合は `name:0`（例：`threat:0`）
+* 特定のマーカーを無効化するには `name:0` を指定（例：`threat:0`）
 * このオプションは複数回指定できます。
 
 **使用例：**
 
 ```bash
-# approachを黄色、experimentをティール色、threatを無効化
+# approach を黄色に、experiment をティールに、threat を無効化
 keyphrase input.pdf --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff --color-map threat:0
 ```
 
-#### 現在の色設定の確認（凡例出力）
+#### 色の凡例（レジェンド）表示
 
-`--color-map` で設定した色をターミナル上で確認できます。
-色調整時に便利です。
+現在有効な色の設定をターミナルで確認できます。
 
 ```bash
-keyphrase --color-legend text   # 凡例をプレーンテキストで表示
-keyphrase --color-legend ansi   # 24ビットカラー（背景＋黒文字）で表示
-keyphrase --color-legend html   # HTMLテーブル形式の凡例を表示（ドキュメント貼り付け用）
+keyphrase --color-legend text   # プレーンテキストで表示
+keyphrase --color-legend ansi   # ANSIカラーで背景＋黒文字表示（24ビット端末推奨）
+keyphrase --color-legend html   # HTMLテーブル形式で表示（ドキュメント貼り付け用）
 ```
 
-`--color-map` と組み合わせると、カスタム設定をプレビューできます：
+`--color-map` と組み合わせてカスタム設定のプレビューが可能です：
 
 ```bash
 keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff
 ```
 
-* **ANSI出力**は背景色ブロック＋黒文字（24ビットカラー端末で推奨）
-* **HTML出力**はドキュメント等に貼り付け可能です
+### スキムモード（要点抽出）
 
-### バッチ／バッファ処理オプション
+* `--skim`：動機、主な貢献、主要な発見などの重要文のみを抽出
 
-* `--buffer-size N`：LLMへ一括処理する文バッファの最大文字数（デフォルト：2000）
+### ログ・詳細表示に関するオプション
 
-### その他のオプション
+* `-q`, `--quiet`：すべての出力や進捗表示を抑制します
+* `--debug`：デバッグ出力を有効に（プロンプトやレスポンス表示、進捗バーも含む）
+* `--verbose`：進捗バーを表示（デフォルトの動作）
 
-* `-m MODEL`, `--model MODEL`：利用するOllamaモデル名（デフォルト：`qwen3:30b-a3b`）
-* `--max-sentence-length N`：分析する1文あたりの最大文字数（デフォルト：80）
-* `--overwrite`：既存出力ファイルの上書き許可
-* `--verbose`：tqdmによる進捗バー表示
+### モデル・バッチ処理オプション
+
+* `-m MODEL`, `--model MODEL`：使用する Ollama モデル（デフォルト：`qwen3:30b-a3b`）
+* `--max-sentence-length N`：解析対象となる1文あたりの最大文字数（デフォルト：80）
+* `--buffer-size N`：バッチ処理時の最大文字数（デフォルト：2000）
 
 ### 使用例
 
 ```bash
 keyphrase paper.pdf -O
-# → paper.pdfを注釈し、paper-annotated.pdfとして出力
+# → paper.pdf を注釈し、paper-annotated.pdf として出力
 
 keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100 --verbose
-# → notes.mdをhighlights.mdとして出力し、バッファ5000文字、最大文長100、進捗表示付きで処理
+# → notes.md を highlights.md として出力し、
+# バッファを5000文字、最大文長100に設定、進捗表示付きで処理
 ```
 
 ## 必要要件

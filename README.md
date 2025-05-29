@@ -70,13 +70,14 @@ keyphrase input.md
 
 * Annotates `input.md`, outputs as `out.md` using HTML `<span>` tags for highlights.
 
-### Output filename options
+### Output options
 
 * `-o OUTPUT`, `--output OUTPUT`: Specify output file name.
   Use `-o -` to write output to standard output (Markdown only).
 * `-O`, `--output-auto`: Output to `INPUT-annotated.pdf` or `INPUT-annotated.md`.
 * By default, output will be `out.pdf` or `out.md`.
   If the file exists, an error is raised unless `--overwrite` is specified.
+* `--overwrite`: Overwrite output file if it already exists
 
 ### Color options
 
@@ -117,17 +118,24 @@ keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experim
 * **ANSI output** uses a background color block and black text for visibility (works best in 24-bit color terminals).
 * **HTML output** can be copy-pasted into documentation.
 
-### Batch/Buffering options
+### Skim mode
 
-* `--buffer-size N`: Buffer size for batch LLM queries (in characters, default: 2000).
-  Sentences are processed in batches for efficiency.
+* `--skim`: Enable skim mode -- extract only key sentences (motivation, main contributions, key findings).
+
+### Logging and verbosity options
+
+* `-q`, `--quiet`: Suppress all progress output and messages.
+
+* `--debug`: Enable debug output (show prompts/responses) and progress bar.
+
+* `--verbose`: Show progress bar (default behavior if no --quiet).
 
 ### Other options
 
 * `-m MODEL`, `--model MODEL`: Specify the Ollama model to use (default: `qwen3:30b-a3b`)
 * `--max-sentence-length N`: Maximum sentence length for analysis (default: 80)
-* `--overwrite`: Overwrite output file if it already exists
-* `--verbose`: Show progress bar with tqdm
+* `--buffer-size N`: Buffer size for batch LLM queries (in characters, default: 2000).
+  Sentences are processed in batches for efficiency.
 
 ### More usage examples
 
