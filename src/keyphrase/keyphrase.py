@@ -131,8 +131,8 @@ def label_sentences(
         raise ValueError(f"Unknown extraction mode: {extraction}")
 
     labels_extracted: List[List[Optional[str]]] = []
-    num_retries = 3
-    for i in range(num_retries):
+    num_trials = 3
+    for i in range(num_trials):
         if debug:
             print("[Debug] prompt", file=sys.stderr)
             for line in prompt.split("\n"):
@@ -157,18 +157,22 @@ def label_sentences(
             print(f"Warning: LLM returned invalid JSON schema on attempt {i + 1}: {e}", file=sys.stderr)
             print(f"LLM response content: {content}", file=sys.stderr)
 
-    required_vote = len(labels_extracted) // 2 + 1
-    labels = []
-    for lbls in zip(*labels_extracted):
-        for lbl in lbls:
-            if lbl is None:
-                continue
-            if lbls.count(lbl) >= required_vote:
-                labels.append(lbl)
-                break  # for lbl
-        else:
-            labels.append(None)
-    return labels
+    if not labels_extracted:
+        print("Warning: LLM returned invalid JSON schema on all attempts; skipping highlights.", file=sys.stderr)
+        return [None] * len(sentences)
+    else:
+        required_vote = len(labels_extracted) // 2 + 1
+        labels = []
+        for lbls in zip(*labels_extracted):
+            for lbl in lbls:
+                if lbl is None:
+                    continue
+                if lbls.count(lbl) >= required_vote:
+                    labels.append(lbl)
+                    break  # for lbl
+            else:
+                labels.append(None)
+        return labels
 
 
 def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
