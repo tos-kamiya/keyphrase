@@ -68,7 +68,7 @@ def make_skim_prompt(numbered: List[str]) -> str:
         "- Select no more than *10 sentences** in total.\n"
         "- Also list reference or bibliography sentences, typically listing prior work or sources cited in the paper.\n"
         "Example:\n"
-        "{\n  \"skim\": [0, 3, 5],\n  \"reference\": [2, 8]\n}\n"
+        '{\n  "skim": [0, 3, 5],\n  "reference": [2, 8]\n}\n'
         "Numbered sentences:\n"
     )
     return INSTRUCTIONS + "\n".join(numbered)
@@ -80,10 +80,7 @@ class Skim(BaseModel):
 
 
 def label_sentences(
-    sentences: List[str],
-    model: str,
-    extraction: str = "aetr",  # 'aetr' or 'k'
-    debug: bool = False
+    sentences: List[str], model: str, extraction: str = "aetr", debug: bool = False  # 'aetr' or 'k'
 ) -> List[Optional[str]]:
     """
     Assign a category label to each sentence using LLM.
@@ -104,7 +101,7 @@ def label_sentences(
         labels: List[Optional[str]] = [None] * len(sentences)
         category_data = result.model_dump()
         for cat, idxs in category_data.items():
-            if cat == 'reference':
+            if cat == "reference":
                 continue
             for idx in idxs:
                 if 0 <= idx < len(sentences) and labels[idx] is None:
@@ -112,7 +109,7 @@ def label_sentences(
 
         # Remove the items categorized as references
         for cat, idxs in category_data.items():
-            if cat == 'reference':
+            if cat == "reference":
                 for idx in idxs:
                     if 0 <= idx < len(sentences):
                         labels[idx] = None
@@ -545,46 +542,45 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
 
     parser.add_argument("--overwrite", action="store_true", help="Overwrite when the output file exists.")
     parser.add_argument(
-        "--buffer-size", type=int, default=1300,
+        "--buffer-size",
+        type=int,
+        default=1300,
         help="Buffer size threshold for batch processing (characters, default: 1300)",
     )
     parser.add_argument(
-        "--max-sentence-length", type=int, default=120,
+        "--max-sentence-length",
+        type=int,
+        default=120,
         help="Maximum length of each sentence for analysis (default: 120)",
     )
     parser.add_argument(
-        "-m", "--model", type=str, default="qwen3:30b-a3b",
+        "-m",
+        "--model",
+        type=str,
+        default="qwen3:30b-a3b",
         help="LLM for key sentence detection (default: 'qwen3:30b-a3b').",
     )
     parser.add_argument(
-        "--skim", action="store_true",
+        "--skim",
+        action="store_true",
         help="If set, extract key-phrases only, otherwise, extract approach/experiment/threat.",
     )
     parser.add_argument(
-        "--color-map", type=str, action="append",
+        "--color-map",
+        type=str,
+        action="append",
         help="Customize marker colors. Format: 'name:#rgba' or 'name:#rrrggbbaa'.",
     )
     parser.add_argument(
-        "--color-legend", choices=["text", "ansi", "html"],
+        "--color-legend",
+        choices=["text", "ansi", "html"],
         help="Output color legend in the specified format (text|ansi|html).",
     )
 
     group2 = parser.add_mutually_exclusive_group()
-    group2.add_argument(
-        "-q", "--quiet",
-        action="store_true",
-        help="Suppress progress output (disable verbose)."
-    )
-    group2.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug output (prompt/response) and progress bar."
-    )
-    group2.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable progress bar (default)."
-    )
+    group2.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output (disable verbose).")
+    group2.add_argument("--debug", action="store_true", help="Enable debug output (prompt/response) and progress bar.")
+    group2.add_argument("--verbose", action="store_true", help="Enable progress bar (default).")
 
     return parser
 
