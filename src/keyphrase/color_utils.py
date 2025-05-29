@@ -5,6 +5,7 @@ DEFAULT_COLOR_MAP: Dict[str, str] = {
     "threat": "#fec6afb0",
     "experiment": "#d0fbb1b0",
     "approach": "#8edefbb0",
+    "skim": "#f1feaee6",
 }
 
 
@@ -42,6 +43,7 @@ LABELS = {
     "approach": "Approach/Methodology",
     "experiment": "Experimental Results",
     "threat": "Threats to Validity",
+    "skim": "Key phrases",
 }
 
 

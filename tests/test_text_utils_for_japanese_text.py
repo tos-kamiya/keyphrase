@@ -24,9 +24,9 @@ def test_split_by_punct_character_japanese(text):
 
 
 def test_extract_sentences_simple_japanese():
-    paragraph = "これは文です。これは別の文です。"
+    paragraph = "これは、１つ目の文です。これは別の文です。"
     result = extract_sentences(paragraph, sentence_max_length=100)
-    assert result == ["これは文です。", "これは別の文です。"]
+    assert result == ["これは、１つ目の文です。", "これは別の文です。"]
 
 
 def test_extract_sentences_question_exclamation_japanese():

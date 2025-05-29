@@ -20,7 +20,7 @@ from .color_utils import (
 )
 
 
-def make_joint_category_prompt(numbered: List[str]) -> str:
+def make_sentence_category_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
         "Below are numbered sentences, presented in their original order as consecutive lines from a scientific paper paragraph. "
         "Each sentence should be interpreted in the context of the surrounding sentences.\n"
@@ -51,14 +51,40 @@ def make_joint_category_prompt(numbered: List[str]) -> str:
     return INSTRUCTIONS + "\n".join(numbered)
 
 
-class JointImportantPhrases(BaseModel):
+class SentenceCategory(BaseModel):
     approach: List[int]
     experiment: List[int]
     threat: List[int]
     reference: List[int]
 
 
-def label_sentences(sentences: List[str], model: str, debug: bool = False) -> List[Optional[str]]:
+def make_skim_prompt(numbered: List[str]) -> str:
+    INSTRUCTIONS = (
+        "Below are numbered sentences, presented in their original order as consecutive lines from a scientific paper paragraph. "
+        "Each sentence should be interpreted in the context of the surrounding sentences.\n"
+        "From the numbered list of sentences below, identify the **key sentences** that are essential for skimming:\n"
+        "- These should include: the paper's motivation, main contributions, proposed method (in brief), and key findings or results.\n"
+        "- Avoid detailed implementation or background unless essential to understanding the novelty.\n"
+        "- Select no more than *10 sentences** in total.\n"
+        "- Also list reference or bibliography sentences, typically listing prior work or sources cited in the paper.\n"
+        "Example:\n"
+        "{\n  \"skim\": [0, 3, 5],\n  \"reference\": [2, 8]\n}\n"
+        "Numbered sentences:\n"
+    )
+    return INSTRUCTIONS + "\n".join(numbered)
+
+
+class Skim(BaseModel):
+    skim: List[int]
+    reference: List[int]
+
+
+def label_sentences(
+    sentences: List[str],
+    model: str,
+    extraction: str = "aetr",  # 'aetr' or 'k'
+    debug: bool = False
+) -> List[Optional[str]]:
     """
     Assign a category label to each sentence using LLM.
     The strategy is to try LLM multiple times and select the response
@@ -67,27 +93,37 @@ def label_sentences(sentences: List[str], model: str, debug: bool = False) -> Li
 
     Args:
         sentences (List[str]): Sentences to label.
+        extraction: 'aetr' for approach/experiment/threat/reference, 's' for skim mode.
         model (str): LLM model name.
 
     Returns:
-        List[Optional[str]]: List of category labels ("approach", "experiment", "threat", "reference") or None.
+        List[Optional[str]]: List of category label of each sentence or None.
     """
     numbered = [f"{idx}: {s}" for idx, s in enumerate(sentences)]
+    content: Optional[str] = None
 
-    maps = []
+    if extraction == "aetr":
+        prompt = make_sentence_category_prompt(numbered)
+        schema = SentenceCategory.model_json_schema()
+        validator = SentenceCategory.model_validate_json
+    elif extraction == "s":
+        prompt = make_skim_prompt(numbered)
+        schema = Skim.model_json_schema()
+        validator = Skim.model_validate_json
+    else:
+        raise ValueError(f"Unknown extraction mode: {extraction}")
+
     num_retries = 3
     for i in range(num_retries):
-        prompt = make_joint_category_prompt(numbered)
         if debug:
             print("[Debug] prompt", file=sys.stderr)
             for line in prompt.split("\n"):
                 print(f"> {line}", file=sys.stderr)
-        content: Optional[str] = None
         try:
             response = ollama.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                format=JointImportantPhrases.model_json_schema(),
+                format=schema,
             )
             content = response.message.content
             assert content is not None
@@ -95,44 +131,30 @@ def label_sentences(sentences: List[str], model: str, debug: bool = False) -> Li
                 print("[Debug] response", file=sys.stderr)
                 for line in content.split("\n"):
                     print(f"> {line}", file=sys.stderr)
-            result = JointImportantPhrases.model_validate_json(content)
+            result = validator(content)
 
-            size = len(result.approach) + len(result.experiment) + len(result.threat)
-            cat_indices_map = {
-                "approach": result.approach,
-                "experiment": result.experiment,
-                "threat": result.threat,
-            }
-            maps.append((size, cat_indices_map))
         except ValidationError as e:
             assert content is not None
             print(f"Warning: LLM returned invalid JSON schema on attempt {i + 1}: {e}", file=sys.stderr)
             print(f"LLM response content: {content}", file=sys.stderr)
 
-    if not maps:
-        print(
-            f"Error: No valid LLM responses received after {num_retries} attempts. Returning all sentences as unclassified.",
-            file=sys.stderr,
-        )
-        return [None] * len(sentences)
+    labels: List[Optional[str]] = [None] * len(sentences)
+    category_data = result.model_dump()
+    for cat, idxs in category_data.items():
+        if cat == 'reference':
+            continue
+        for idx in idxs:
+            if 0 <= idx < len(sentences) and labels[idx] is None:
+                labels[idx] = cat
 
-    # Select the map with the smallest size (fewest classified sentences in core categories)
-    maps.sort(key=lambda sc: sc[0])
-    cat_indices_map = maps[0][1]
+    # Remove the items categorized as references
+    for cat, idxs in category_data.items():
+        if cat == 'reference':
+            for idx in idxs:
+                if 0 <= idx < len(sentences):
+                    labels[idx] = None
 
-    labeled: List[Optional[str]] = [None] * len(sentences)
-
-    for cat_name in ["approach", "experiment", "threat"]:
-        for idx in cat_indices_map[cat_name]:
-            if 0 <= idx < len(sentences):  # Validate index is within bounds
-                if labeled[idx] is None:  # Only label if not already labeled by a previous category
-                    labeled[idx] = cat_name
-            else:
-                print(
-                    f"Warning: LLM returned out-of-bounds index {idx} for category '{cat_name}'. Skipping.",
-                    file=sys.stderr,
-                )
-    return labeled
+    return labels
 
 
 def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
@@ -153,7 +175,8 @@ def process_buffered_pdf(
     buffer: List[Tuple[int, int, str]],  # (page_idx, sent_idx, sentence)
     pdf_color_map: Dict[str, Tuple[float, float, float, float]],
     model: str,
-    debug: bool = False
+    extraction: str = "aetr",  # 'aetr' or 's'
+    debug: bool = False,
 ) -> None:
     """
     Process a batch (buffer) of sentences for a PDF, highlighting sentences according to category.
@@ -161,12 +184,13 @@ def process_buffered_pdf(
     Args:
         doc (fitz.Document): PyMuPDF document object.
         buffer (List[Tuple[int, int, str]]): Sentences to process, with page indices.
+        extraction: 'aetr' for approach/experiment/threat/reference, 's' for skim mode.
         model (str): LLM model name.
     """
     sentences = [item[2] for item in buffer]
 
     # Batch label and annotate
-    labels = label_sentences(sentences, model, debug=debug)
+    labels = label_sentences(sentences, model, extraction=extraction, debug=debug)
 
     for (page_idx, sent_idx, sent), cat in zip(buffer, labels):
         if not cat or cat not in pdf_color_map:  # Ensure category is valid for highlighting
@@ -201,6 +225,7 @@ def highlight_sentences_in_pdf(
     model: str,
     buffer_size: int,
     max_sentence_length: int,
+    extraction: str = "aetr",  # 'aetr' or 's'
     verbose: bool = False,
     debug: bool = False,
 ) -> None:
@@ -213,6 +238,7 @@ def highlight_sentences_in_pdf(
         model (str): LLM model name.
         buffer_size (int): Buffer size (character count).
         max_sentence_length (int): Maximum length of each sentence.
+        extraction: 'aetr' for approach/experiment/threat/reference, 's' for skim mode.
         verbose (bool): If True, print progress.
     """
     pdf_color_map = {k: hex_to_float(v) for k, v in color_map.items()}
@@ -245,16 +271,16 @@ def highlight_sentences_in_pdf(
                 if len(sent) >= 5:
                     buffer.append((page_idx, idx, sent))
             if buffer_len_chars(buffer) >= buffer_size:
-                process_buffered_pdf(doc, buffer, pdf_color_map, model, debug=debug)
+                process_buffered_pdf(doc, buffer, pdf_color_map, model, extraction=extraction, debug=debug)
                 buffer.clear()
 
         # Process any remaining sentences in the buffer at the end of the page
         if buffer:
-            process_buffered_pdf(doc, buffer, pdf_color_map, model, debug=debug)
+            process_buffered_pdf(doc, buffer, pdf_color_map, model, extraction=extraction, debug=debug)
             buffer.clear()
 
     if buffer:  # This check is redundant due to page-level processing, but harmless.
-        process_buffered_pdf(doc, buffer, pdf_color_map, model, debug=debug)
+        process_buffered_pdf(doc, buffer, pdf_color_map, model, extraction=extraction, debug=debug)
         buffer.clear()
 
     doc.save(output_pdf_path, garbage=4)
@@ -266,6 +292,7 @@ def process_buffered_md(
     buffer: List[Tuple[int, int, str]],  # (para_idx, sent_idx, sentence)
     color_map: Dict[str, str],
     model: str,
+    extraction: str = "aetr",  # 'aetr' or 's'
     debug: bool = False,
 ) -> Dict[Tuple[int, int], str]:
     """
@@ -274,6 +301,7 @@ def process_buffered_md(
     Args:
         buffer (List[Tuple[int, int, str]]): Sentences to process, with paragraph indices.
         model (str): LLM model name.
+        extraction: 'aetr' for approach/experiment/threat/reference, 's' for skim mode.
 
     Returns:
         Dict[Tuple[int, int], str]: Mapping (para_idx, sent_idx) to highlighted HTML.
@@ -281,7 +309,7 @@ def process_buffered_md(
     sentences = [item[2] for item in buffer]
 
     # Batch label and collect highlights
-    labels = label_sentences(sentences, model, debug=debug)
+    labels = label_sentences(sentences, model, extraction=extraction, debug=debug)
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
         # Ensure category is valid and has a corresponding color in MD_COLOR_MAP
@@ -301,6 +329,7 @@ def highlight_sentences_in_md(
     model: str,
     buffer_size: int,
     max_sentence_length: int,
+    extraction: str = "aetr",  # 'aetr' or 's'
     verbose: bool = False,
     debug: bool = False,
 ) -> None:
@@ -313,6 +342,7 @@ def highlight_sentences_in_md(
         model (str): LLM model name.
         buffer_size (int): Buffer size (character count).
         max_sentence_length (int): Maximum length of each sentence.
+        extraction: 'aetr' for approach/experiment/threat/reference, 's' for skim mode.
         verbose (bool): If True, print progress.
     """
     with open(md_path, "r", encoding="utf-8") as f:
@@ -345,13 +375,13 @@ def highlight_sentences_in_md(
 
         # If buffer size threshold is reached, process the batch
         if buffer_len_chars(buffer) >= buffer_size:
-            batch_highlights = process_buffered_md(buffer, color_map, model, debug=debug)
+            batch_highlights = process_buffered_md(buffer, color_map, model, extraction=extraction, debug=debug)
             highlighted.update(batch_highlights)
             buffer.clear()
 
     # Process any remaining sentences in the buffer after all paragraphs are done
     if buffer:
-        highlighted.update(process_buffered_md(buffer, color_map, model, debug=debug))
+        highlighted.update(process_buffered_md(buffer, color_map, model, extraction=extraction, debug=debug))
         buffer.clear()
 
     # Reconstruct Markdown with highlighted sentences
@@ -463,6 +493,10 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
         help="LLM for key sentence detection (default: 'qwen3:30b-a3b').",
     )
     parser.add_argument(
+        "--skim", action="store_true",
+        help="If set, extract key-phrases only, otherwise, extract approach/experiment/threat.",
+    )
+    parser.add_argument(
         "--color-map", type=str, action="append",
         help="Customize marker colors. Format: 'name:#rgba' or 'name:#rrrggbbaa'.",
     )
@@ -544,6 +578,7 @@ def main() -> None:
             color_map=color_map,
             model=args.model,
             buffer_size=args.buffer_size,
+            extraction="s" if args.skim else "aetr",
             max_sentence_length=args.max_sentence_length,
             verbose=verbose,
             debug=debug,
@@ -555,6 +590,7 @@ def main() -> None:
             color_map=color_map,
             model=args.model,
             buffer_size=args.buffer_size,
+            extraction="s" if args.skim else "aetr",
             max_sentence_length=args.max_sentence_length,
             verbose=verbose,
             debug=debug,
