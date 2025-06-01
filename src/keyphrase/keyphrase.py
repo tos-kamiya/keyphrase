@@ -10,7 +10,6 @@ import ollama
 from pydantic import BaseModel, ValidationError
 from tqdm import tqdm
 
-from .text_utils import extract_sentences_iter, split_markdown_paragraphs, unload_sentence_splitting_model
 from .color_utils import (
     DEFAULT_COLOR_MAP,
     InvalidColorMap,
@@ -19,6 +18,8 @@ from .color_utils import (
     hex_to_float,
     make_color_map,
 )
+from .pdf_utils import extract_paragraphs_in_page, find_least_appearance
+from .text_utils import extract_sentences_iter, split_markdown_paragraphs, unload_sentence_splitting_model
 
 
 def make_sentence_category_prompt(numbered: List[str]) -> str:
@@ -212,68 +213,17 @@ def process_buffered_pdf(
         if not search_text:  # Avoid searching for empty strings
             continue
 
-        # If a hyphen used to indicate a continuation line is present at the end of a line, the search will fail.
-        # Delete it in advance before performing the search.
-        if len(search_text) >= 2:
-            search_text = re.sub(r"[-]+\s*$", "", search_text)
-
-        quads = page.search_for(search_text)
-        if len(quads) == 1:
+        found_text, count = find_least_appearance(search_text, page)
+        if found_text and count == 1:
+            quads = page.search_for(found_text)
             highlight = page.add_highlight_annot(quads[0])
             r, g, b, a = pdf_color_map[cat]
             highlight.set_colors({"stroke": (r, g, b)})
             highlight.set_opacity(a)
             highlight.update()
-        elif len(quads) == 0:
-            if sys.stderr.isatty():
+        else:
+            if count == 0:
                 print(f"Warning: '{search_text}' not found on page {page_idx+1}.", file=sys.stderr)
-
-
-def expand_rect(rect: fitz.Rect, margin: float) -> fitz.Rect:
-    """
-    Expand a rectangle by a given margin in all directions.
-    """
-    return fitz.Rect(
-        rect.x0 - margin,
-        rect.y0 - margin,
-        rect.x1 + margin,
-        rect.y1 + margin,
-    )
-
-
-def extract_nonfigure_blocks(page: fitz.Page, margin: float = 5.0) -> List[Tuple]:
-    """
-    Extract text blocks from a PDF page that do not overlap with any image areas.
-
-    Parameters:
-        page (fitz.Page): The PDF page to process.
-        margin (float): Extra padding (in points) around each image when checking for overlap.
-
-    Returns:
-        List[Tuple]: A list of text blocks in the same format as `page.get_text("blocks")`,
-                     excluding those that intersect with image regions.
-    """
-    # Get image rectangles from the page dictionary
-    image_rects = []
-    page_dict = page.get_text("dict")
-    for block in page_dict["blocks"]:
-        if block["type"] == 1 and "bbox" in block:
-            rect = fitz.Rect(block["bbox"])
-            image_rects.append(expand_rect(rect, margin))
-
-    # Get all text blocks and exclude those that overlap with any image rect
-    nonfigure_blocks = []
-    for block in page.get_text("blocks"):
-        if block[6] != 0:
-            continue  # Not a text block
-
-        text_rect = fitz.Rect(block[:4])
-        if any(text_rect.intersects(img_rect) for img_rect in image_rects):
-            continue
-
-        nonfigure_blocks.append(block)
-
-    return nonfigure_blocks
 
 
 def highlight_sentences_in_pdf(
@@ -307,8 +257,7 @@ def highlight_sentences_in_pdf(
         print(f"Split sentences ...", file=sys.stderr)
     page_paragraph_sentences_data: Dict[int, List[Tuple[int, List[str]]]] = dict()
     for page_idx, page in enumerate(doc):
-        blocks = extract_nonfigure_blocks(page)
-        paragraphs = [b[4].strip() for b in blocks if b[6] == 0 and b[4].strip()]
+        paragraphs = extract_paragraphs_in_page(page)
         paragraph_sentences_data: List[Tuple[int, List[str]]] = list(
             enumerate(extract_sentences_iter(paragraphs, max_sentence_length))
         )
