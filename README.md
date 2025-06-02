@@ -118,9 +118,12 @@ keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experim
 * **ANSI output** uses a background color block and black text for visibility (works best in 24-bit color terminals).
 * **HTML output** can be copy-pasted into documentation.
 
-### Skim mode
+### Skim mode (experimental)
 
-* `--skim`: Enable skim mode -- extract only key sentences (motivation, main contributions, key findings).
+* `--skim`: Enable skim mode, a simplified highlighting mode intended for survey papers
+  (i.e., papers not following the typical problem → approach → experiment structure).
+  Instead of categorizing sentences by type, this mode highlights only
+  important sentences using a single highlight color.
 
 ### Logging and verbosity options
 

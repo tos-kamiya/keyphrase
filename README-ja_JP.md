@@ -118,9 +118,10 @@ keyphrase --color-legend html   # HTMLテーブル形式で表示（ドキュメ
 keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff
 ```
 
-### スキムモード（要点抽出）
+### スキムモード（要点抽出； 実験中）
 
-* `--skim`：動機、主な貢献、主要な発見などの重要文のみを抽出
+* `--skim`：サーベイ論文など、問題→手法→実験という典型的な構成でないペーパー向けの簡易強調モード。
+  文をカテゴリ別に色分けせず、重要な文のみを単色でハイライトします。
 
 ### ログ・詳細表示に関するオプション
 
