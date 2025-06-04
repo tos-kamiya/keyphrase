@@ -64,11 +64,8 @@ def make_skim_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
         "Below are numbered sentences, presented in their original order as consecutive lines from a scientific paper paragraph. "
         "Each sentence should be interpreted in the context of the surrounding sentences.\n"
-        "From the numbered list of sentences below, identify the **key sentences** that are essential for skimming:\n"
-        "- These should include: the paper's motivation, main contributions, proposed method (in brief), and key findings or results.\n"
-        "- Avoid detailed implementation or background unless essential to understanding the novelty.\n"
-        "- Select no more than **10 sentences** in total.\n"
-        "- Also list reference or bibliography sentences, typically listing prior work or sources cited in the paper.\n"
+        "From the numbered list of sentences below, identify the key sentences. Select no more than **10 sentences** in total.\n"
+        "Also list reference or bibliography sentences, typically listing prior work or sources cited in the paper.\n"
         "Example:\n"
         '{\n  "skim": [0, 3, 5],\n  "reference": [2, 8]\n}\n'
         "Numbered sentences:\n"
