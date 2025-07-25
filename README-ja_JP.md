@@ -8,8 +8,6 @@
 * [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)（英文）
 * [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf)（日本語）
 
-**※** 出力例は最新バージョンのものではないので、配色が異なっています。
-
 ## 特徴
 
 * **PDF**および**Markdown**（`.md`）ファイルに対応

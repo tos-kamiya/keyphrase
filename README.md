@@ -7,8 +7,6 @@
 * [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)
 * [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf) (in Japanese)
 
-**Note:** The example outputs may not reflect the latest version of the tool, and the highlight colors may differ from the current defaults.
-
 ## Features
 
 * Supports both **PDF** and **Markdown** (`.md`) files
