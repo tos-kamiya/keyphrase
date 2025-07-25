@@ -83,14 +83,14 @@ def label_sentences(
 ) -> List[Optional[str]]:
     """
     Assign a category label to each sentence using LLM.
-    The strategy is to try LLM multiple times and select the response
-    that classifies the fewest sentences (excluding 'reference' for this size metric),
-    aiming for a more concise selection.
+    The strategy is to try LLM multiple times, feeding previous responses back to refine the result.
+    The final result from the last successful trial is used.
 
     Args:
         sentences (List[str]): Sentences to label.
         extraction: 'aetr' for approach/experiment/threat/reference, 's' for skim mode.
         model (str): LLM model name.
+        debug (bool): Enable debug prints.
 
     Returns:
         List[Optional[str]]: List of category label of each sentence or None.
@@ -112,58 +112,79 @@ def label_sentences(
                 for idx in idxs:
                     if 0 <= idx < len(sentences):
                         labels[idx] = None
-
         return labels
 
     numbered = [f"{idx}: {s}" for idx, s in enumerate(sentences)]
-    content: Optional[str] = None
 
     if extraction == "aetr":
-        prompt = make_sentence_category_prompt(numbered)
-        schema = SentenceCategory.model_json_schema()
+        prompt_text = make_sentence_category_prompt(numbered)
         validator = SentenceCategory.model_validate_json
     elif extraction == "s":
-        prompt = make_skim_prompt(numbered)
-        schema = Skim.model_json_schema()
+        prompt_text = make_skim_prompt(numbered)
         validator = Skim.model_validate_json
     else:
         raise ValueError(f"Unknown extraction mode: {extraction}")
 
-    labels_extracted: List[List[Optional[str]]] = []
+    last_valid_labels: List[Optional[str]] = []
     num_trials = 3
+    messages = [{"role": "user", "content": prompt_text}]
+
     for i in range(num_trials):
         if debug:
-            print("[Debug] prompt", file=sys.stderr)
-            for line in prompt.split("\n"):
-                print(f"> {line}", file=sys.stderr)
+            print(f"--- Attempt {i + 1}/{num_trials} ---", file=sys.stderr)
+            print("[Debug] Sending messages:", file=sys.stderr)
+            for msg in messages:
+                print(f"  Role: {msg['role']}", file=sys.stderr)
+                content_preview = (msg['content'][:150] + '...') if len(msg['content']) > 150 else msg['content']
+                print(f"  Content: {content_preview.strip()}", file=sys.stderr)
+
         try:
             response = ollama.chat(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
-                format=schema,
+                messages=messages,
+                format="json",
             )
-            content = response.message.content
-            assert content is not None
+            content = response.get("message", {}).get("content", "")
+            if not content:
+                print(f"Warning: Empty response content on attempt {i + 1}", file=sys.stderr)
+                continue
+
             if debug:
-                print("[Debug] response", file=sys.stderr)
-                for line in content.split("\n"):
-                    print(f"> {line}", file=sys.stderr)
-            result = validator(content)
-            labels_extracted.append(extract_labels(result))
+                print("[Debug] Raw LLM response:", file=sys.stderr)
+                print(f"> {content}", file=sys.stderr)
+
+            try:
+                result = validator(content)
+            except ValidationError:
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    result = validator(json_str)
+                else:
+                    raise
+            last_valid_labels = extract_labels(result)  # Overwrite with the latest valid labels
+
+            messages.append({"role": "assistant", "content": content})
+            if i < num_trials - 1:
+                messages.append({
+                    "role": "user",
+                    "content": "That was a good attempt. Please review your previous answer and provide a new, improved one. Focus on accuracy and conciseness."
+                })
 
         except ValidationError as e:
-            assert content is not None
-            print(f"Warning: LLM returned invalid JSON schema on attempt {i + 1}: {e}", file=sys.stderr)
-            print(f"LLM response content: {content}", file=sys.stderr)
+            print(f"Warning: LLM returned invalid JSON on attempt {i + 1}: {e}", file=sys.stderr)
+            if 'content' in locals():
+                content = content.rstrip()
+                print(f"LLM response content: {content}", file=sys.stderr)
+        except Exception as e:
+            print(f"An error occurred during LLM call on attempt {i + 1}: {e}", file=sys.stderr)
 
-    if not labels_extracted:
-        print("Warning: LLM returned invalid JSON schema on all attempts; skipping highlights.", file=sys.stderr)
+    if not last_valid_labels:
+        print("Warning: LLM returned no valid responses; skipping highlights.", file=sys.stderr)
         return [None] * len(sentences)
-    else:
-        lvs = [Counter(lbls).most_common()[0] for lbls in zip(*labels_extracted)]
-        required_vote = len(labels_extracted) // 2 + 1
-        labels = [(lbl if votes >= required_vote else None) for lbl, votes in lvs]
-        return labels
+
+    # Use the result from the last successful trial.
+    return last_valid_labels
 
 
 def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
