@@ -153,7 +153,6 @@ keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100
 * Python 3.10 or newer
 * [Ollama](https://ollama.com/) running locally
 * Qwen3:30b-a3b model installed in Ollama (`ollama pull qwen3:30b-a3b`)
-* Required dependencies: blingfire, numpy, pymupdf, ollama, tqdm, pydantic
 
 ## License
 

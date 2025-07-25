@@ -149,7 +149,6 @@ keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100
 * Python 3.10 以上
 * [Ollama](https://ollama.com/)（ローカルで稼働）
 * Ollamaで`qwen3:30b-a3b`モデルインストール済み（`ollama pull qwen3:30b-a3b`）
-* 必要な依存ライブラリ: blingfire, numpy, pymupdf, ollama, tqdm, pydantic
 
 ## ライセンス
 
