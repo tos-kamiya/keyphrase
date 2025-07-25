@@ -156,13 +156,9 @@ def label_sentences(
             try:
                 result = validator(content)
             except ValidationError:
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                    result = validator(json_str)
-                else:
-                    raise
-            last_valid_labels = extract_labels(result)  # Overwrite with the latest valid labels
+                content = content.rstrip() + "}"  # Add missing closing brace when JSON validation fails due to incomplete structure
+                result = validator(content)
+            last_valid_labels = extract_labels(result)  # Overwrite with the latest valid labels0
 
             messages.append({"role": "assistant", "content": content})
             if i < num_trials - 1:
