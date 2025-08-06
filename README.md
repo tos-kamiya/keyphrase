@@ -25,7 +25,7 @@
 ### 1. Install via pipx (recommended)
 
 ```bash
-pipx install https://github.com/tos-kamiya/keyphrase
+pipx install git+https://github.com/tos-kamiya/keyphrase.git
 ```
 
 If you don't have `pipx`:
