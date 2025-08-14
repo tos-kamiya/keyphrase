@@ -2,6 +2,7 @@ from typing import List, Optional, Tuple
 
 import fitz
 
+
 def expand_rect(rect: fitz.Rect, margin: float) -> fitz.Rect:
     """
     Expand a rectangle by a given margin in all directions.
@@ -122,4 +123,3 @@ def find_least_appearance(query: str, page: fitz.Page) -> Optional[Tuple[str, in
     q = query[b:e]
     # Return the expanded substring and its occurrence count on the page.
     return q, find_count(q)
-

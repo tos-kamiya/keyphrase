@@ -6,6 +6,7 @@ import sys
 from typing import List, Dict, Optional, Tuple
 
 import fitz  # PyMuPDF
+
 try:
     import ollama
 except ImportError:
@@ -28,11 +29,14 @@ from .harmony_ollama import HarmonyOllamaClient
 
 # --- Prompts and Pydantic Models ---
 
+
 def make_sentence_category_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
-        "Below are numbered sentences from a scientific paper. For each category ('approach', 'experiment', 'threat', 'reference'), "
-        "select the sentences that best fit. Return a JSON object with four keys, each containing a list of 0-based indices.\n"
-        "Example: {\"approach\": [2], \"experiment\": [4], \"threat\": [7], \"reference\": [10]}\n"
+        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **most essential key sentences** to form a concise summary. "
+        "For each category ('approach', 'experiment', 'threat', 'reference'), select **small number of important sentences**. "
+        "Be selective and avoid including sentences with minor details.\n"
+        "Return a JSON object with four keys, each containing a list of 0-based indices of the selected sentences.\n"
+        'Example: {"approach": [2], "experiment": [4], "threat": [7], "reference": [10]}\n'
         "Numbered sentences:\n"
     )
     return INSTRUCTIONS + "\n".join(numbered)
@@ -47,9 +51,10 @@ class SentenceCategory(BaseModel):
 
 def make_skim_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
-        "From the numbered list of sentences below, identify key sentences (max 10) and reference sentences. "
+        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **most essential key sentences** to form a concise summary. "
+        "Be selective and avoid including sentences with minor details.\n"
         "Return a JSON object with 'skim' and 'reference' keys, each with a list of 0-based indices.\n"
-        "Example: {\"skim\": [0, 3, 5], \"reference\": [2, 8]}\n"
+        'Example: {"skim": [0, 3, 5], "reference": [2, 8]}\n'
         "Numbered sentences:\n"
     )
     return INSTRUCTIONS + "\n".join(numbered)
@@ -59,7 +64,9 @@ class Skim(BaseModel):
     skim: List[int]
     reference: List[int]
 
+
 # --- LLM Interaction ---
+
 
 def label_sentences_ollama_native(
     sentences: List[str], model: str, extraction: str, debug: bool
@@ -82,9 +89,9 @@ def label_sentences_ollama_native(
         if not content:
             print("Warning: Empty response from Ollama.", file=sys.stderr)
             return [None] * len(sentences)
-        
+
         result = validator(content)
-        
+
         labels: List[Optional[str]] = [None] * len(sentences)
         category_data = result.model_dump()
         for cat, idxs in category_data.items():
@@ -112,7 +119,7 @@ def label_sentences_harmony(
 
     try:
         result = client.generate_json(prompt_text, pydantic_model, debug=debug)
-        
+
         labels: List[Optional[str]] = [None] * len(sentences)
         category_data = result.model_dump()
         for cat, idxs in category_data.items():
@@ -135,17 +142,19 @@ def label_sentences(
     extraction: str,
     ollama_base_url: str,
     debug: bool,
+    timeout: float,
 ) -> List[Optional[str]]:
     if llm_backend == "ollama":
         return label_sentences_ollama_native(sentences, model, extraction, debug)
     elif llm_backend == "harmony":
-        client = HarmonyOllamaClient(base_url=ollama_base_url, model=model)
+        client = HarmonyOllamaClient(base_url=ollama_base_url, model=model, timeout=timeout)
         return label_sentences_harmony(sentences, client, extraction, debug)
     else:
         raise ValueError(f"Unknown LLM backend: {llm_backend}")
 
 
 # --- Core Processing Logic ---
+
 
 def buffer_len_chars(buffer: List[Tuple[int, int, str]]) -> int:
     return sum(len(sent) for (_, _, sent) in buffer)
@@ -160,14 +169,15 @@ def process_buffered_pdf(
     extraction: str,
     ollama_base_url: str,
     debug: bool,
+    timeout: float,
 ) -> None:
     sentences = [item[2] for item in buffer]
-    labels = label_sentences(sentences, llm_backend, model, extraction, ollama_base_url, debug)
+    labels = label_sentences(sentences, llm_backend, model, extraction, ollama_base_url, debug, timeout)
 
     for (page_idx, _, sent), cat in zip(buffer, labels):
         if not cat or cat not in pdf_color_map:
             continue
-        
+
         page = doc[page_idx]
         search_text = sent.strip()
         if not search_text:
@@ -183,7 +193,10 @@ def process_buffered_pdf(
                 highlight.set_opacity(a)
                 highlight.update()
         elif count > 1:
-             print(f"Warning: Skipping ambiguous text '{search_text}' (found {count} times) on page {page_idx+1}.", file=sys.stderr)
+            print(
+                f"Warning: Skipping ambiguous text '{search_text}' (found {count} times) on page {page_idx+1}.",
+                file=sys.stderr,
+            )
         else:
             print(f"Warning: Text '{search_text}' not found on page {page_idx+1}.", file=sys.stderr)
 
@@ -200,6 +213,7 @@ def highlight_sentences_in_pdf(
     extraction: str,
     verbose: bool,
     debug: bool,
+    timeout: float,
 ) -> None:
     pdf_color_map = {k: hex_to_float(v) for k, v in color_map.items()}
     doc = fitz.open(pdf_path)
@@ -207,7 +221,7 @@ def highlight_sentences_in_pdf(
 
     if verbose:
         print("Splitting sentences...", file=sys.stderr)
-    
+
     page_paragraph_sentences_data = {
         page_idx: list(enumerate(extract_sentences_iter(extract_paragraphs_in_page(page), max_sentence_length)))
         for page_idx, page in enumerate(doc)
@@ -220,13 +234,17 @@ def highlight_sentences_in_pdf(
             for s_idx, sent in enumerate(sentences):
                 if len(sent.strip()) > 5:
                     buffer.append((page_idx, s_idx, sent))
-            
+
             if buffer_len_chars(buffer) >= buffer_size:
-                process_buffered_pdf(doc, buffer, pdf_color_map, llm_backend, model, extraction, ollama_base_url, debug)
+                process_buffered_pdf(
+                    doc, buffer, pdf_color_map, llm_backend, model, extraction, ollama_base_url, debug, timeout
+                )
                 buffer.clear()
 
-        if buffer: # Process remaining buffer at the end of each page
-            process_buffered_pdf(doc, buffer, pdf_color_map, llm_backend, model, extraction, ollama_base_url, debug)
+        if buffer:  # Process remaining buffer at the end of each page
+            process_buffered_pdf(
+                doc, buffer, pdf_color_map, llm_backend, model, extraction, ollama_base_url, debug, timeout
+            )
             buffer.clear()
 
     doc.save(output_pdf_path, garbage=4)
@@ -242,10 +260,11 @@ def process_buffered_md(
     extraction: str,
     ollama_base_url: str,
     debug: bool,
+    timeout: float,
 ) -> Dict[Tuple[int, int], str]:
     sentences = [item[2] for item in buffer]
-    labels = label_sentences(sentences, llm_backend, model, extraction, ollama_base_url, debug)
-    
+    labels = label_sentences(sentences, llm_backend, model, extraction, ollama_base_url, debug, timeout)
+
     highlights: Dict[Tuple[int, int], str] = {}
     for (para_idx, sent_idx, sent), cat in zip(buffer, labels):
         if cat and cat in color_map:
@@ -266,10 +285,11 @@ def highlight_sentences_in_md(
     extraction: str,
     verbose: bool,
     debug: bool,
+    timeout: float,
 ) -> None:
     with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
-    
+
     if "data:image/" in content:
         print("Error: Markdown file appears to contain base64-encoded images, which is not supported.", file=sys.stderr)
         sys.exit(1)
@@ -277,26 +297,32 @@ def highlight_sentences_in_md(
     paragraphs = split_markdown_paragraphs(content)
     if verbose:
         print("Splitting sentences...", file=sys.stderr)
-    
+
     paragraph_sentences_data = list(enumerate(extract_sentences_iter(paragraphs, max_sentence_length)))
     unload_sentence_splitting_model()
 
     buffer: List[Tuple[int, int, str]] = []
     highlighted: Dict[Tuple[int, int], str] = {}
-    
-    it = tqdm(paragraph_sentences_data, unit="paragraph", desc="Key Extraction") if verbose else paragraph_sentences_data
+
+    it = (
+        tqdm(paragraph_sentences_data, unit="paragraph", desc="Key Extraction") if verbose else paragraph_sentences_data
+    )
     for p_idx, sentences in it:
         for s_idx, sent in enumerate(sentences):
             if len(sent.strip()) > 5:
                 buffer.append((p_idx, s_idx, sent))
-        
+
         if buffer_len_chars(buffer) >= buffer_size:
-            batch_highlights = process_buffered_md(buffer, color_map, llm_backend, model, extraction, ollama_base_url, debug)
+            batch_highlights = process_buffered_md(
+                buffer, color_map, llm_backend, model, extraction, ollama_base_url, debug, timeout
+            )
             highlighted.update(batch_highlights)
             buffer.clear()
 
     if buffer:
-        batch_highlights = process_buffered_md(buffer, color_map, llm_backend, model, extraction, ollama_base_url, debug)
+        batch_highlights = process_buffered_md(
+            buffer, color_map, llm_backend, model, extraction, ollama_base_url, debug, timeout
+        )
         highlighted.update(batch_highlights)
         buffer.clear()
 
@@ -304,7 +330,7 @@ def highlight_sentences_in_md(
         "".join(highlighted.get((p_idx, s_idx), sent) for s_idx, sent in enumerate(sentences))
         for p_idx, sentences in paragraph_sentences_data
     ]
-    
+
     out_text = "\n\n".join(reconstructed_paragraphs)
     if output_path is None:
         print(out_text)
@@ -315,6 +341,7 @@ def highlight_sentences_in_md(
 
 
 # --- CLI and Main Entry ---
+
 
 def get_output_path(
     input_path: str, output: Optional[str], output_auto: bool, suffix: str = "-annotated", overwrite: bool = False
@@ -348,14 +375,16 @@ def detect_filetype(path: str) -> str:
 
 def build_parser(mode: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Highlight key sentences in scientific documents using LLMs.")
-    
+
     if mode != "color_legend":
         parser.add_argument("input", help="Input PDF or Markdown file")
 
     # Output options
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument("-o", "--output", help="Output file path. Use '-' for stdout (Markdown only).")
-    output_group.add_argument("-O", "--output-auto", action="store_true", help="Automatically generate output name as INPUT-annotated.ext.")
+    output_group.add_argument(
+        "-O", "--output-auto", action="store_true", help="Automatically generate output name as INPUT-annotated.ext."
+    )
     parser.add_argument("--overwrite", action="store_true", help="Overwrite the output file if it exists.")
 
     # LLM and processing options
@@ -380,10 +409,13 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
         "--skim", action="store_true", help="Use 'skim' mode for extraction instead of detailed categories."
     )
     llm_group.add_argument(
-        "--buffer-size", type=int, default=1300, help="Character buffer size for batch processing (default: 1300)."
+        "--buffer-size", type=int, default=3000, help="Character buffer size for batch processing (default: 3000)."
     )
     llm_group.add_argument(
         "--max-sentence-length", type=int, default=120, help="Maximum sentence length for analysis (default: 120)."
+    )
+    llm_group.add_argument(
+        "--timeout", type=float, default=200.0, help="Timeout for LLM API requests in seconds (default: 200)."
     )
 
     # Color and display options
@@ -397,8 +429,8 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
     color_group.add_argument(
         "--color-legend",
         choices=["text", "ansi", "html"],
-        nargs='?', 
-        const='ansi',
+        nargs="?",
+        const="ansi",
         help="Show color legend and exit. Optionally specify format (text, ansi, html).",
     )
 
@@ -407,7 +439,7 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
     verbosity_group.add_argument("-q", "--quiet", action="store_true", help="Suppress all non-error output.")
     verbosity_group.add_argument("--debug", action="store_true", help="Enable detailed debug output.")
     verbosity_group.add_argument("-v", "--verbose", action="store_true", help="Enable progress bar (default).")
-    
+
     return parser
 
 
@@ -462,6 +494,7 @@ def main() -> None:
             extraction=extraction_mode,
             verbose=verbose,
             debug=debug,
+            timeout=args.timeout,
         )
     elif filetype == "md":
         highlight_sentences_in_md(
@@ -476,7 +509,9 @@ def main() -> None:
             extraction=extraction_mode,
             verbose=verbose,
             debug=debug,
+            timeout=args.timeout,
         )
+
 
 if __name__ == "__main__":
     main()

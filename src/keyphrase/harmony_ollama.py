@@ -1,5 +1,3 @@
-
-
 import json
 import re
 import time
@@ -36,7 +34,7 @@ class HarmonyOllamaClient:
         self,
         base_url: str = "http://localhost:11434",
         model: str = "gpt-oss:20b",
-        timeout: float = 120.0,
+        timeout: float = 200.0,
         retries: int = 1,
     ):
         """
@@ -64,11 +62,13 @@ class HarmonyOllamaClient:
         developer_message = DeveloperContent(
             content=json_schema_hint or "Return a valid JSON object that conforms to the requested schema."
         )
-        conversation = Conversation.from_messages([
-            Message.from_role_and_content(Role.SYSTEM, system_message),
-            Message.from_role_and_content(Role.DEVELOPER, developer_message),
-            Message.from_role_and_content(Role.USER, user_text),
-        ])
+        conversation = Conversation.from_messages(
+            [
+                Message.from_role_and_content(Role.SYSTEM, system_message),
+                Message.from_role_and_content(Role.DEVELOPER, developer_message),
+                Message.from_role_and_content(Role.USER, user_text),
+            ]
+        )
         token_ids = self.enc.render_conversation_for_completion(conversation, Role.ASSISTANT)
         return self.enc.decode(token_ids)
 
@@ -83,9 +83,9 @@ class HarmonyOllamaClient:
             "stop": ["<|return|>"],
             "stream": False,
         }
-        # Add debug print to show the payload being sent
-        print(f"--- Sending payload to Ollama ---\n{json.dumps(payload, indent=2)}\n---------------------------------", flush=True)
-        
+        # # Add debug print to show the payload being sent
+        # print(f"--- Sending payload to Ollama ---\n{json.dumps(payload, indent=2)}\n---------------------------------", flush=True)
+
         response = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=self.timeout)
         response.raise_for_status()
         return response.json().get("response", "")
@@ -124,10 +124,18 @@ class HarmonyOllamaClient:
         Raises:
             RuntimeError: If the request fails after all retries or if parsing fails.
         """
+        # Sanitize user input to prevent prompt injection with special tokens
+        # This is a crucial security and stability measure.
+        special_tokens = ["<|start|>", "<|end|>", "<|channel|>", "<|message|>", "<|return|>"]
+        sanitized_user_text = user_text
+        for token in special_tokens:
+            # Replace with a visually similar but non-functional representation
+            sanitized_user_text = sanitized_user_text.replace(token, f"[{token.strip('<|>')}]")
+
         last_exception = None
         for attempt in range(self.retries + 1):
             # On retry, provide a more forceful instruction.
-            current_user_text = user_text
+            current_user_text = sanitized_user_text
             if attempt > 0:
                 current_user_text += "\n\n--- IMPORTANT ---\nRespond with a valid JSON object ONLY. Do not add any commentary or extra text outside the JSON structure."
 
@@ -135,7 +143,7 @@ class HarmonyOllamaClient:
 
             try:
                 raw_response = self._call_ollama_api(prompt)
-                print(f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}\n---------------------------------", flush=True)
+                # print(f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}\n---------------------------------", flush=True)
 
                 if debug:
                     print(f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}", flush=True)
@@ -155,10 +163,12 @@ class HarmonyOllamaClient:
                     error_content = "Response not available."
                     if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
                         error_content = e.response.text
-                    
+
                     with open(error_dump_path, "w") as f:
                         f.write(error_content)
-                    print(f"Error: Final attempt failed. Detailed error response saved to {error_dump_path}", flush=True)
+                    print(
+                        f"Error: Final attempt failed. Detailed error response saved to {error_dump_path}", flush=True
+                    )
 
             except RuntimeError as e:
                 last_exception = e
@@ -166,4 +176,6 @@ class HarmonyOllamaClient:
                 if attempt >= self.retries:
                     print(f"Error: Final attempt failed to find 'final' channel.", flush=True)
 
-        raise RuntimeError(f"Failed to get a valid JSON response after {self.retries + 1} attempts.") from last_exception
+        raise RuntimeError(
+            f"Failed to get a valid JSON response after {self.retries + 1} attempts."
+        ) from last_exception
