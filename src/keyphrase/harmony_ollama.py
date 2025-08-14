@@ -72,7 +72,7 @@ class HarmonyOllamaClient:
         token_ids = self.enc.render_conversation_for_completion(conversation, Role.ASSISTANT)
         return self.enc.decode(token_ids)
 
-    def _call_ollama_api(self, prompt: str) -> str:
+    def _call_ollama_api(self, prompt: str, debug: bool = False) -> str:
         """
         Makes a POST request to the Ollama /api/generate endpoint.
         """
@@ -83,8 +83,8 @@ class HarmonyOllamaClient:
             "stop": ["<|return|>"],
             "stream": False,
         }
-        # # Add debug print to show the payload being sent
-        # print(f"--- Sending payload to Ollama ---\n{json.dumps(payload, indent=2)}\n---------------------------------", flush=True)
+        if debug:
+            print(f"--- Sending payload to Ollama ---\n{json.dumps(payload, indent=2)}\n---------------------------------", flush=True)
 
         response = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=self.timeout)
         response.raise_for_status()
@@ -116,7 +116,7 @@ class HarmonyOllamaClient:
             user_text: The user's input prompt.
             pydantic_model: The Pydantic model to validate the JSON output against.
             json_schema_hint: A hint to the model about the expected JSON schema.
-            debug: If True, prints raw responses for debugging.
+            debug: If True, prints prompts and raw responses for debugging.
 
         Returns:
             A validated Pydantic model instance.
@@ -142,7 +142,7 @@ class HarmonyOllamaClient:
             prompt = self._render_prompt(current_user_text, json_schema_hint)
 
             try:
-                raw_response = self._call_ollama_api(prompt)
+                raw_response = self._call_ollama_api(prompt, debug=debug)
                 # print(f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}\n---------------------------------", flush=True)
 
                 if debug:
