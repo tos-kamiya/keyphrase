@@ -149,6 +149,9 @@ class HarmonyOllamaClient:
                     print(f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}", flush=True)
 
                 final_text = self._extract_final_channel(raw_response)
+                m = re.match(r"```(?:json)?\s*\n(.*?)\n```(?:\s*)$", final_text, flags=re.DOTALL | re.IGNORECASE)
+                if m:
+                    final_text = m.group(1).strip()
                 validated_data = pydantic_model.model_validate_json(final_text)
                 return validated_data
 
