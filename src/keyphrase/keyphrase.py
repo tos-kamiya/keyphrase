@@ -1,7 +1,5 @@
 import argparse
-from collections import Counter
 import os
-import re
 import sys
 from typing import List, Dict, Optional, Tuple
 
@@ -32,9 +30,9 @@ from .harmony_ollama import HarmonyOllamaClient
 
 def make_sentence_category_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
-        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **most essential key sentences** to form a concise summary. "
-        "For each category ('approach', 'experiment', 'threat', 'reference'), select **small number of important sentences**. "
-        "Be selective and avoid including sentences with minor details.\n"
+        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **key sentences** to form a concise summary for each category ('approach', 'experiment', 'threat', 'reference')."
+        # "For each category ('approach', 'experiment', 'threat', 'reference'), select **small number of important sentences**. "
+        # "Be selective and avoid including sentences with minor details.\n"
         "Return a JSON object with four keys, each containing a list of 0-based indices of the selected sentences.\n"
         'Example: {"approach": [2], "experiment": [4], "threat": [7], "reference": [10]}\n'
         "Numbered sentences:\n"
@@ -51,8 +49,8 @@ class SentenceCategory(BaseModel):
 
 def make_skim_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
-        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **most essential key sentences** to form a concise summary. "
-        "Be selective and avoid including sentences with minor details.\n"
+        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **key sentences** to form a concise summary. "
+        # "Be selective and avoid including sentences with minor details.\n"
         "Return a JSON object with 'skim' and 'reference' keys, each with a list of 0-based indices.\n"
         'Example: {"skim": [0, 3, 5], "reference": [2, 8]}\n'
         "Numbered sentences:\n"
@@ -415,7 +413,7 @@ def build_parser(mode: str) -> argparse.ArgumentParser:
         "--max-sentence-length", type=int, default=120, help="Maximum sentence length for analysis (default: 120)."
     )
     llm_group.add_argument(
-        "--timeout", type=float, default=200.0, help="Timeout for LLM API requests in seconds (default: 200)."
+        "--timeout", type=float, default=300.0, help="Timeout for LLM API requests in seconds (default: 300)."
     )
 
     # Color and display options
