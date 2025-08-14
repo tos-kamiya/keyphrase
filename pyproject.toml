@@ -18,13 +18,12 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
   "wtpsplit",
-  "torch",
-  "numpy",
-  "pymupdf",
+  "torch>=2.2",
+  "numpy>=1.26",
+  "pymupdf>=1.24",
   "ollama",
   "tqdm",
   "requests",
