@@ -15,8 +15,17 @@ from openai_harmony import (
 )
 from pydantic import BaseModel, ValidationError
 
-# Final channel content extraction regex
-_FINAL_RE = re.compile(r"<\|channel\|>final<\|message\|>(.*)", re.DOTALL)
+# Final channel content extraction regex (non-greedy, stop at end/return)
+_FINAL_RE = re.compile(
+    r"<\|channel\|>final<\|message\|>(.*?)(?:<\|end\|>|<\|return\|>)",
+    re.DOTALL,
+)
+# Fenced JSON blocks
+_CODE_FENCE_BLOCK_RE = re.compile(
+    r"```(?:json|jsonc|json5)?\s*(.*?)\s*```",
+    re.DOTALL | re.IGNORECASE,
+)
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -24,10 +33,9 @@ class HarmonyOllamaClient:
     """
     A client for interacting with an Ollama server using the Harmony format.
 
-    This client handles rendering prompts in the Harmony format, sending them to
-    Ollama's `/api/generate` endpoint with `raw: true`, and parsing the
-    `final` channel from the response. It also includes retry logic and
-    Pydantic validation for JSON outputs.
+    This client renders Harmony prompts, calls Ollama /api/generate with raw mode,
+    and parses the payload robustly (final channel -> raw JSON -> fenced JSON).
+    It also includes retry logic and Pydantic validation for JSON outputs.
     """
 
     def __init__(
@@ -36,31 +44,56 @@ class HarmonyOllamaClient:
         model: str = "gpt-oss:20b",
         timeout: float = 200.0,
         retries: int = 1,
+        *,
+        # Generation controls to reduce timeouts / verbosity
+        num_predict: int = 512,
+        num_ctx: int = 8192,
+        temperature: float = 0.2,
+        top_p: float = 0.9,
     ):
         """
-        Initialize the client.
-
         Args:
-            base_url: The base URL of the Ollama server.
-            model: The model name to use for generation.
-            timeout: The request timeout in seconds.
-            retries: The number of times to retry on failure.
+            base_url: Ollama base URL.
+            model: model name.
+            timeout: HTTP timeout (seconds).
+            retries: number of retries on failure.
+            num_predict: max tokens to generate.
+            num_ctx: context window size.
+            temperature: sampling temperature.
+            top_p: nucleus sampling.
         """
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.retries = retries
         self.enc = load_harmony_encoding(HName.HARMONY_GPT_OSS)
+        self._gen_options = {
+            "num_predict": num_predict,
+            "num_ctx": num_ctx,
+            "temperature": temperature,
+            "top_p": top_p,
+        }
 
     def _render_prompt(self, user_text: str, json_schema_hint: str | None = None) -> str:
         """
-        Renders a conversation into a single prompt string using the Harmony format.
+        Render a Harmony-formatted prompt.
+        We “force” the assistant to start in the final channel to reduce analysis.
         """
         system_message = SystemContent(
-            content="You are a helpful assistant. Output a valid JSON object in the final channel. Do not include any other text or explanations."
+            content=(
+                "You are a helpful assistant. Respond ONLY in the `final` channel. "
+                "Do NOT output the `analysis` channel. Output a valid JSON value (object or array) "
+                "and do not include any other text, markdown, or code fences."
+            )
         )
         developer_message = DeveloperContent(
-            content=json_schema_hint or "Return a valid JSON object that conforms to the requested schema."
+            content=(
+                (json_schema_hint or "Return a valid JSON object that conforms to the requested schema.")
+                + "\nSTRICT REQUIREMENTS:\n"
+                "- Respond only in the final channel.\n"
+                "- No code fences (no ``` of any kind).\n"
+                "- No explanations or extra text outside JSON."
+            )
         )
         conversation = Conversation.from_messages(
             [
@@ -70,34 +103,64 @@ class HarmonyOllamaClient:
             ]
         )
         token_ids = self.enc.render_conversation_for_completion(conversation, Role.ASSISTANT)
-        return self.enc.decode(token_ids)
+        prompt = self.enc.decode(token_ids)
+        # Pseudo “no-thinking”: start writing directly to final channel
+        if not prompt.endswith("<|channel|>final<|message|>"):
+            prompt = prompt + "<|channel|>final<|message|>"
+        return prompt
 
     def _call_ollama_api(self, prompt: str, debug: bool = False) -> str:
         """
-        Makes a POST request to the Ollama /api/generate endpoint.
+        Call Ollama /api/generate with raw mode and generation options.
         """
+        # Backward-compat guard
+        gen_options = getattr(
+            self,
+            "_gen_options",
+            {"num_predict": 512, "num_ctx": 8192, "temperature": 0.2, "top_p": 0.9},
+        )
+
         payload = {
             "model": self.model,
             "prompt": prompt,
             "raw": True,
             "stop": ["<|return|>"],
             "stream": False,
+            "options": gen_options,
         }
         if debug:
-            print(f"--- Sending payload to Ollama ---\n{json.dumps(payload, indent=2)}\n---------------------------------", flush=True)
+            print(
+                f"--- Sending payload to Ollama ---\n{json.dumps(payload, indent=2)}\n---------------------------------",
+                flush=True,
+            )
 
         response = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=self.timeout)
         response.raise_for_status()
         return response.json().get("response", "")
 
-    def _extract_final_channel(self, text: str) -> str:
+    def _extract_final_payload(self, text: str) -> str:
         """
-        Extracts the content of the 'final' channel from the Harmony response.
+        Extract usable payload in order of preference:
+        1) Harmony final channel.
+        2) Whole response as raw JSON (object/array).
+        3) First fenced JSON block (json*/no-language).
+        4) Fallback: return stripped text.
         """
-        match = _FINAL_RE.search(text)
-        if not match:
-            raise RuntimeError(f"Harmony 'final' channel not found in response: {text}")
-        return match.group(1).strip()
+        s = (text or "").strip()
+
+        m = _FINAL_RE.search(s)
+        if m:
+            return m.group(1).strip()
+
+        if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+            return s
+
+        if "```" in s:
+            m2 = _CODE_FENCE_BLOCK_RE.search(s) or re.search(r"```\s*(.*?)\s*```", s, re.DOTALL)
+            if m2:
+                return m2.group(1).strip()
+
+        return s
 
     def generate_json(
         self,
@@ -107,77 +170,73 @@ class HarmonyOllamaClient:
         debug: bool = False,
     ) -> T:
         """
-        Generates a JSON object from a user prompt and validates it against a Pydantic model.
-
-        This method handles prompt rendering, API calls, response parsing, and validation,
-        including a retry mechanism for validation failures.
-
-        Args:
-            user_text: The user's input prompt.
-            pydantic_model: The Pydantic model to validate the JSON output against.
-            json_schema_hint: A hint to the model about the expected JSON schema.
-            debug: If True, prints prompts and raw responses for debugging.
-
-        Returns:
-            A validated Pydantic model instance.
-
-        Raises:
-            RuntimeError: If the request fails after all retries or if parsing fails.
+        Generate JSON from user_text and validate with pydantic_model.
+        Retries on request/parse/validation failures.
         """
-        # Sanitize user input to prevent prompt injection with special tokens
-        # This is a crucial security and stability measure.
+        # Sanitize user input against special harmony tokens
         special_tokens = ["<|start|>", "<|end|>", "<|channel|>", "<|message|>", "<|return|>"]
         sanitized_user_text = user_text
         for token in special_tokens:
-            # Replace with a visually similar but non-functional representation
             sanitized_user_text = sanitized_user_text.replace(token, f"[{token.strip('<|>')}]")
 
         last_exception = None
+        raw_response_dump_path = "ollama_error_response.txt"
+
         for attempt in range(self.retries + 1):
-            # On retry, provide a more forceful instruction.
             current_user_text = sanitized_user_text
             if attempt > 0:
-                current_user_text += "\n\n--- IMPORTANT ---\nRespond with a valid JSON object ONLY. Do not add any commentary or extra text outside the JSON structure."
+                current_user_text += (
+                    "\n\n--- IMPORTANT ---\n"
+                    "Return ONLY valid JSON with no code fences and no extra text."
+                )
 
             prompt = self._render_prompt(current_user_text, json_schema_hint)
 
             try:
                 raw_response = self._call_ollama_api(prompt, debug=debug)
-                # print(f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}\n---------------------------------", flush=True)
-
                 if debug:
-                    print(f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}", flush=True)
+                    print(
+                        f"--- Raw Ollama Response (Attempt {attempt + 1}) ---\n{raw_response}",
+                        flush=True,
+                    )
 
-                final_text = self._extract_final_channel(raw_response)
-                m = re.match(r"```(?:json)?\s*\n(.*?)\n```(?:\s*)$", final_text, flags=re.DOTALL | re.IGNORECASE)
+                final_text = self._extract_final_payload(raw_response)
+
+                # Keep a strict stripper for the common ```json ... ``` pattern
+                m = re.match(
+                    r"```(?:json)?\s*\n(.*?)\n```(?:\s*)$",
+                    final_text,
+                    flags=re.DOTALL | re.IGNORECASE,
+                )
                 if m:
                     final_text = m.group(1).strip()
+
                 validated_data = pydantic_model.model_validate_json(final_text)
                 return validated_data
 
             except (requests.RequestException, json.JSONDecodeError, ValidationError) as e:
                 last_exception = e
                 print(f"Warning: Attempt {attempt + 1} failed. Reason: {e}", flush=True)
-                if attempt < self.retries:
-                    time.sleep(1)  # Wait a moment before retrying
-                else:
-                    # Save the actual error response from the server for debugging
-                    error_dump_path = "ollama_error_response.txt"
-                    error_content = "Response not available."
-                    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
-                        error_content = e.response.text
+                # Save raw response for debugging
+                try:
+                    with open(raw_response_dump_path, "w") as f:
+                        f.write(raw_response if "raw_response" in locals() else "(no response captured)")
+                except Exception:
+                    pass
 
-                    with open(error_dump_path, "w") as f:
-                        f.write(error_content)
+                if attempt < self.retries:
+                    time.sleep(1)
+                else:
                     print(
-                        f"Error: Final attempt failed. Detailed error response saved to {error_dump_path}", flush=True
+                        f"Error: Final attempt failed. Raw response saved to {raw_response_dump_path}",
+                        flush=True,
                     )
 
             except RuntimeError as e:
                 last_exception = e
                 print(f"Warning: Attempt {attempt + 1} failed. Reason: {e}", flush=True)
                 if attempt >= self.retries:
-                    print(f"Error: Final attempt failed to find 'final' channel.", flush=True)
+                    print("Error: Final attempt failed to find 'final' channel.", flush=True)
 
         raise RuntimeError(
             f"Failed to get a valid JSON response after {self.retries + 1} attempts."

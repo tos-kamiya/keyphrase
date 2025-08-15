@@ -30,11 +30,10 @@ from .harmony_ollama import HarmonyOllamaClient
 
 def make_sentence_category_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
-        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **key sentences** to form a concise summary for each category ('approach', 'experiment', 'threat', 'reference')."
-        # "For each category ('approach', 'experiment', 'threat', 'reference'), select **small number of important sentences**. "
-        # "Be selective and avoid including sentences with minor details.\n"
+        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **small number of key sentences** to form a concise summary for each category ('approach', 'experiment', 'threat', 'reference'). "
+        "The sentences are listed in the same order as in the original paper, so please consider their context and flow when making selections.\n"
         "Return a JSON object with four keys, each containing a list of 0-based indices of the selected sentences.\n"
-        'Example: {"approach": [2], "experiment": [4], "threat": [7], "reference": [10]}\n'
+        'Example: {\"approach\": [2], \"experiment\": [4], \"threat\": [7], \"reference\": [10]}\n'
         "Numbered sentences:\n"
     )
     return INSTRUCTIONS + "\n".join(numbered)
@@ -49,10 +48,10 @@ class SentenceCategory(BaseModel):
 
 def make_skim_prompt(numbered: List[str]) -> str:
     INSTRUCTIONS = (
-        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **key sentences** to form a concise summary. "
-        # "Be selective and avoid including sentences with minor details.\n"
+        "You are an expert assistant for scientific paper analysis. From the numbered list of sentences below, identify the **small number of key sentences** to form a concise summary. "
+        "The sentences are listed in the same order as in the original paper, so please consider their context and flow when making selections.\n"
         "Return a JSON object with 'skim' and 'reference' keys, each with a list of 0-based indices.\n"
-        'Example: {"skim": [0, 3, 5], "reference": [2, 8]}\n'
+        'Example: {\"skim\": [0, 3, 5], \"reference\": [2, 8]}\n'
         "Numbered sentences:\n"
     )
     return INSTRUCTIONS + "\n".join(numbered)
@@ -69,6 +68,12 @@ class Skim(BaseModel):
 def label_sentences_ollama_native(
     sentences: List[str], model: str, extraction: str, debug: bool
 ) -> List[Optional[str]]:
+    """
+    Two-pass extraction with refinement:
+      1) Run once to get an initial selection.
+      2) Run again with the first-pass JSON included, asking the model to refine.
+         If the second pass fails validation, fall back to the first pass.
+    """
     if ollama is None:
         raise ImportError("The 'ollama' package is required for the 'ollama' backend but is not installed.")
 
@@ -76,37 +81,75 @@ def label_sentences_ollama_native(
     if extraction == "aetr":
         prompt_text = make_sentence_category_prompt(numbered)
         validator = SentenceCategory.model_validate_json
+        model_class = SentenceCategory
     else:  # 's'
         prompt_text = make_skim_prompt(numbered)
         validator = Skim.model_validate_json
+        model_class = Skim
 
-    messages = [{"role": "user", "content": prompt_text}]
+    # ---------- Pass 1 ----------
     try:
-        response = ollama.chat(model=model, messages=messages, format="json")
-        content = response.get("message", {}).get("content", "")
-        if not content:
-            print("Warning: Empty response from Ollama.", file=sys.stderr)
+        messages = [{"role": "user", "content": prompt_text}]
+        resp1 = ollama.chat(model=model, messages=messages, format="json")
+        content1 = resp1.get("message", {}).get("content", "")
+        if not content1:
+            print("Warning: Empty response from Ollama (pass 1).", file=sys.stderr)
             return [None] * len(sentences)
 
-        result = validator(content)
-
-        labels: List[Optional[str]] = [None] * len(sentences)
-        category_data = result.model_dump()
-        for cat, idxs in category_data.items():
-            if cat != "reference":
-                for idx in idxs:
-                    if 0 <= idx < len(labels):
-                        labels[idx] = cat
-        return labels
-
+        # validate pass 1
+        result1 = validator(content1)
     except (ValidationError, Exception) as e:
-        print(f"Warning: Ollama native call failed: {e}", file=sys.stderr)
+        print(f"Warning: Ollama native call failed (pass 1): {e}", file=sys.stderr)
         return [None] * len(sentences)
+
+    # ---------- Pass 2 (refinement) ----------
+    # Give the first-pass JSON to the model and ask it to refine the selection.
+    first_json_str = result1.model_dump_json()
+    refine_suffix = (
+        "\n---\n"
+        "First-pass selection (JSON):\n"
+        f"{first_json_str}\n\n"
+        "Refine the selection considering the sentences' order and local context. "
+        "You MAY add or remove indices, fix misclassifications, and deduplicate. "
+        "Prefer fewer, stronger sentences. Keep indices 0-based integers. "
+        "Return ONLY valid JSON with the same schema as before, no code fences or extra text."
+    )
+    prompt_text_refine = prompt_text + refine_suffix
+
+    try:
+        messages2 = [{"role": "user", "content": prompt_text_refine}]
+        resp2 = ollama.chat(model=model, messages=messages2, format="json")
+        content2 = resp2.get("message", {}).get("content", "")
+        if not content2:
+            # Fall back to pass-1 if empty
+            refined = result1
+        else:
+            refined = validator(content2)
+    except (ValidationError, Exception) as e:
+        if debug:
+            print(f"Warning: Ollama native refine failed (falling back to pass 1): {e}", file=sys.stderr)
+        refined = result1
+
+    # ---------- Build labels from the chosen result ----------
+    labels: List[Optional[str]] = [None] * len(sentences)
+    category_data = refined.model_dump()
+    for cat, idxs in category_data.items():
+        if cat != "reference":
+            for idx in idxs:
+                if 0 <= idx < len(labels):
+                    labels[idx] = cat
+    return labels
 
 
 def label_sentences_harmony(
     sentences: List[str], client: HarmonyOllamaClient, extraction: str, debug: bool
 ) -> List[Optional[str]]:
+    """
+    Two-pass extraction with refinement via Harmony:
+      1) Run once to get an initial selection.
+      2) Run again with the first-pass JSON included, asking the model to refine.
+         If the second pass fails (RuntimeError/validation), fall back to the first pass.
+    """
     numbered = [f"{idx}: {s}" for idx, s in enumerate(sentences)]
     if extraction == "aetr":
         prompt_text = make_sentence_category_prompt(numbered)
@@ -115,22 +158,44 @@ def label_sentences_harmony(
         prompt_text = make_skim_prompt(numbered)
         pydantic_model = Skim
 
+    # ---------- Pass 1 ----------
     try:
-        result = client.generate_json(prompt_text, pydantic_model, debug=debug)
-
-        labels: List[Optional[str]] = [None] * len(sentences)
-        category_data = result.model_dump()
-        for cat, idxs in category_data.items():
-            # Do not highlight references
-            if cat != "reference":
-                for idx in idxs:
-                    if 0 <= idx < len(labels):
-                        labels[idx] = cat
-        return labels
-
+        result1 = client.generate_json(prompt_text, pydantic_model, debug=debug)
     except RuntimeError as e:
-        print(f"Warning: Harmony client failed to get a valid response: {e}", file=sys.stderr)
+        print(f"Warning: Harmony client failed to get a valid response (pass 1): {e}", file=sys.stderr)
         return [None] * len(sentences)
+
+    # ---------- Pass 2 (refinement) ----------
+    first_json_str = result1.model_dump_json()
+    refine_suffix = (
+        "\n---\n"
+        "First-pass selection (JSON):\n"
+        f"{first_json_str}\n\n"
+        "Refine the selection considering the sentences' order and local context. "
+        "You MAY add or remove indices, fix misclassifications, and deduplicate. "
+        "Prefer fewer, stronger sentences. Keep indices 0-based integers. "
+        "Return ONLY valid JSON with the same schema as before, no code fences or extra text."
+    )
+    prompt_text_refine = prompt_text + refine_suffix
+
+    try:
+        result2 = client.generate_json(prompt_text_refine, pydantic_model, debug=debug)
+        final_result = result2
+    except RuntimeError as e:
+        if debug:
+            print(f"Warning: Harmony client refine failed (falling back to pass 1): {e}", file=sys.stderr)
+        final_result = result1
+
+    # ---------- Build labels from the chosen result ----------
+    labels: List[Optional[str]] = [None] * len(sentences)
+    category_data = final_result.model_dump()
+    for cat, idxs in category_data.items():
+        # Do not highlight references
+        if cat != "reference":
+            for idx in idxs:
+                if 0 <= idx < len(labels):
+                    labels[idx] = cat
+    return labels
 
 
 def label_sentences(
