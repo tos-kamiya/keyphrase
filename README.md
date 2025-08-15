@@ -5,7 +5,7 @@
 **Example outputs**
 
 * [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)
-* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf) (Japanese)
+* [docs/kbse-202405-kamiya-annotated.pdf](docs/kbse-202405-kamiya-annotated.pdf) (Japanese)
 
 ## What’s new
 

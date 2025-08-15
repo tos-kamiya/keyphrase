@@ -6,7 +6,7 @@
 **出力例**
 
 * [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)（英文）
-* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf)（日本語）
+* [docs/kbse-202405-kamiya-annotated.pdf](docs/kbse-202405-kamiya-annotated.pdf)（日本語）
 
 ## 新機能
 
