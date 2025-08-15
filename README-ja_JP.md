@@ -129,9 +129,10 @@ keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experim
 
 ### モデル・バッチ処理オプション
 
-* `-m MODEL`, `--model MODEL`：使用する Ollama モデル（デフォルト：`qwen3:30b-a3b`）
-* `--max-sentence-length N`：解析対象となる1文あたりの最大文字数（デフォルト：80）
-* `--buffer-size N`：バッチ処理時の最大文字数（デフォルト：2000）
+* `-m MODEL`, `--model MODEL`：使用する Ollama モデル（デフォルト：`gpt-oss:20b`）
+* `--max-sentence-length N`：解析対象となる1文あたりの最大文字数（デフォルト：120）
+* `--buffer-size N`：バッチ処理時の最大文字数（デフォルト：3000）
+* `--timeout N`：LLMのレスポンスのタイムアウトの秒数（デフォルト：300）。タイムアウトが頻繁に起きるようなら大きくしてください
 
 ### 使用例
 
@@ -148,7 +149,7 @@ keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100
 
 * Python 3.10 以上
 * [Ollama](https://ollama.com/)（ローカルで稼働）
-* Ollamaで`qwen3:30b-a3b`モデルインストール済み（`ollama pull qwen3:30b-a3b`）
+* Ollamaで`gpt-oss:20b`モデルインストール済み（`ollama pull gpt-oss:20b`）
 
 ## ライセンス
 

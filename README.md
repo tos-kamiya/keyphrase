@@ -40,12 +40,12 @@ python -m pipx ensurepath
 Keyphrase uses [Ollama](https://ollama.com/) for local LLM inference.
 Follow the instructions for your platform on the [official Ollama site](https://ollama.com/download).
 
-### 3. Download the Qwen3 model for Ollama
+### 3. Download the gpt-oss model for Ollama
 
 Install the required model in your local Ollama server:
 
 ```bash
-ollama pull qwen3:30b-a3b
+ollama pull gpt-oss:20b
 ```
 
 ## Usage
@@ -133,10 +133,12 @@ keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experim
 
 ### Other options
 
-* `-m MODEL`, `--model MODEL`: Specify the Ollama model to use (default: `qwen3:30b-a3b`)
-* `--max-sentence-length N`: Maximum sentence length for analysis (default: 80)
-* `--buffer-size N`: Buffer size for batch LLM queries (in characters, default: 2000).
+* `-m MODEL`, `--model MODEL`: Specify the Ollama model to use (default: `gpt-oss:20b`)
+* `--max-sentence-length N`: Maximum sentence length for analysis (default: 120)
+* `--buffer-size N`: Buffer size for batch LLM queries (in characters, default: 3000).
   Sentences are processed in batches for efficiency.
+* `--timeout N`: Timeout in seconds for the LLM response (default: 300).  
+  Increase this value if timeouts occur frequently.
 
 ### More usage examples
 
@@ -152,7 +154,7 @@ keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100
 
 * Python 3.10 or newer
 * [Ollama](https://ollama.com/) running locally
-* Qwen3:30b-a3b model installed in Ollama (`ollama pull qwen3:30b-a3b`)
+* gpt-oss:20b model installed in Ollama (`ollama pull gpt-oss:20b`)
 
 ## License
 
