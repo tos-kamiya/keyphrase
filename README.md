@@ -1,120 +1,202 @@
 # Keyphrase
 
-**keyphrase** is a command-line tool that automatically detects key phrases and important sentences in PDF or Markdown files using an LLM (Large Language Model) and annotates them with color highlights. It is designed for academic papers, technical documents, and any text where understanding the main points at a glance is helpful.
+**Keyphrase** is a command-line tool that finds key sentences in PDF or Markdown files with the help of a local LLM and highlights them by category. It’s designed for academic papers, technical documents, and any text where you want the main points to pop at a glance.
 
-**Example Outputs**
+**Example outputs**
 
 * [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)
-* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf) (in Japanese)
+* [docs/kbase-202405-kamiya-annotated.pdf](docs/kbase-202405-kamiya-annotated.pdf) (Japanese)
+
+## What’s new
+
+* **Two-pass extraction with refinement**: we run the LLM twice. The second pass receives the first JSON result and refines it (dedup, fix mislabels, prefer fewer/stronger sentences). If validation fails, we safely fall back to pass-1.
+* **Two backends**:
+
+  * `harmony` (default): talks to an Ollama server using the “Harmony” JSON pattern with strict Pydantic validation.
+  * `ollama`: uses Ollama’s native JSON mode.
+* **Color legend generator**: `--color-legend [text|ansi|html]` prints a legend and exits—handy when tweaking colors.
+* **Markdown safety checks**: base64-embedded images in `.md` are rejected with a clear error.
 
 ## Features
 
-* Supports both **PDF** and **Markdown** (`.md`) files
-* AI-based detection and color-coding of key concepts:
+* Works with **PDF** and **Markdown** (`.md`)
+* AI-based detection and color-coding of key concepts (defaults shown):
 
-  * <span style="display:inline-block;width:40px;height:20px;background:#8edefbb0;"></span> **Approach/methodology** (blue): The main novelty or core contribution of the paper
-  * <span style="display:inline-block;width:40px;height:20px;background:#d0fbb1b0;"></span> **Experimental results** (green): Key observations and experimental outcomes
-  * <span style="display:inline-block;width:40px;height:20px;background:#fec6afb0;"></span> **Threats to validity** (pink): Weaknesses or potential problems with the approach
-* Generates a new, annotated file with color-coded highlights
-* Flexible output filename options, with overwrite protection
-* All LLM inference is done locally via Ollama
-* **Customizable highlight colors** for each category via command-line options
+  * <span style="display:inline-block;width:40px;height:20px;background:#8edefbb0;"></span> **Approach / methodology** (blue)
+  * <span style="display:inline-block;width:40px;height:20px;background:#d0fbb1b0;"></span> **Experimental results** (green)
+  * <span style="display:inline-block;width:40px;height:20px;background:#fec6afb0;"></span> **Threats to validity** (pink)
+* Optional **skim mode** for survey-style documents (single highlight class)
+* **Customizable highlight colors** per category
+* **Automatic output naming** with overwrite protection
+* **Local-only inference** via your own Ollama server
+
+> Note: the model also predicts a **`reference`** set (useful sentences that act like citations/anchors). These are **not highlighted** in the output; they inform the selection only.
 
 ## Installation
 
-### 1. Install via pipx (recommended)
+### 1) Install with pipx (recommended)
 
 ```bash
 pipx install git+https://github.com/tos-kamiya/keyphrase.git
 ```
 
-If you don't have `pipx`:
+If you don’t have `pipx` yet:
 
 ```bash
 python -m pip install --user pipx
 python -m pipx ensurepath
 ```
 
-### 2. Install and set up Ollama
+### 2) Install and run Ollama
 
-Keyphrase uses [Ollama](https://ollama.com/) for local LLM inference.
-Follow the instructions for your platform on the [official Ollama site](https://ollama.com/download).
+Keyphrase uses a **local** Ollama server.
 
 ### 3. Download the gpt-oss model for Ollama
 
-Install the required model in your local Ollama server:
+### 3) Pull a model
+
+Default examples use `gpt-oss:20b`:
 
 ```bash
 ollama pull gpt-oss:20b
 ```
 
+You can choose a different model with `-m/--model`.
+
 ## Usage
 
-### Basic usage
+### Quick start
 
-For PDF:
+#### PDF
 
 ```bash
 keyphrase input.pdf
 ```
 
-* Annotates `input.pdf`, outputs as `out.pdf` (if not present).
+* Produces `out.pdf` (unless it exists). Use `--overwrite` to replace.
 
-For Markdown:
+#### Markdown
 
 ```bash
 keyphrase input.md
 ```
 
-* Annotates `input.md`, outputs as `out.md` using HTML `<span>` tags for highlights.
+* Produces `out.md` with `<span style="background-color:...">...</span>`.
+
+* You may also write Markdown to stdout:
+
+```bash
+keyphrase input.md -o -
+```
+
+*(PDF → stdout is not supported.)*
+
+### Backends and models
+
+* `--llm-backend {harmony,ollama}` (default: `harmony`)
+
+  * `harmony`: strict JSON validation (Pydantic) with a Harmony-style prompt.
+  * `ollama`: Ollama’s native `format=json`.
+
+* `-m, --model MODEL` (default: `gpt-oss:20b`)
+
+* `--ollama-base-url URL` (default: `http://localhost:11434`)
+
+**Examples**
+
+```bash
+# Harmony backend (default) with 20B model
+keyphrase paper.pdf --llm-backend harmony -m gpt-oss:20b
+
+# Ollama-native JSON backend
+keyphrase notes.md --llm-backend ollama -m gpt-oss:20b -o highlights.md
+```
+
+### Modes
+
+* **Default (categorized)**: picks sentences into `approach`, `experiment`, `threat` (and `reference` internally).
+* **Skim mode**: a single class of important sentences.
+
+```bash
+keyphrase survey.pdf --skim -O
+```
 
 ### Output options
 
-* `-o OUTPUT`, `--output OUTPUT`: Specify output file name.
-  Use `-o -` to write output to standard output (Markdown only).
-* `-O`, `--output-auto`: Output to `INPUT-annotated.pdf` or `INPUT-annotated.md`.
-* By default, output will be `out.pdf` or `out.md`.
-  If the file exists, an error is raised unless `--overwrite` is specified.
-* `--overwrite`: Overwrite output file if it already exists
+* `-o, --output PATH` : specify output file. Use `-o -` for **Markdown to stdout**.
+* `-O, --output-auto` : write to `INPUT-annotated.ext`.
+* Default names are `out.pdf` / `out.md`.
+* `--overwrite` : allow overwrite if the file exists.
 
 ### Color options
 
-You can fully customize and preview highlight colors for each category using the options below.
+Fine-tune and preview your colors.
 
-#### Customizing highlight colors
+* `--color-map "name:#RRGGBBAA"` (or `#RGBA`). Multiple allowed.
+* Categories: `approach`, `experiment`, `threat`
+* Disable a category with `name:0`
 
-* Use `--color-map` to specify colors for each category.
-* **Format:** `name:#rgba` or `name:#rrrggbbaa` (e.g., `approach:#8edefbb0`)
-* **Available category names:** `approach`, `experiment`, `threat`
-* To disable a specific marker, specify `name:0` (e.g., `threat:0`)
-* This option can be used multiple times.
-
-**Example:**
+**Examples**
 
 ```bash
-# Change 'approach' to yellow, 'experiment' to teal, and disable 'threat'
-keyphrase input.pdf --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff --color-map threat:0
+# Change colors
+keyphrase paper.pdf \
+  --color-map approach:#ffcc00ff \
+  --color-map experiment:#44cc99ff \
+  --color-map threat:#cc66cc88
+
+# Disable threat highlighting
+keyphrase paper.pdf --color-map threat:0
 ```
 
-#### Checking your current color settings (legend output)
-
-You can check the currently active highlight colors as a legend in your terminal.
-This is especially useful when adjusting colors with `--color-map`.
+#### Legends
 
 ```bash
-keyphrase --color-legend text   # Show legend as plain text
-keyphrase --color-legend ansi   # Show legend with 24-bit color blocks (background + black text)
-keyphrase --color-legend html   # Show legend as a compact HTML table snippet
+keyphrase --color-legend           # same as --color-legend=ansi
+keyphrase --color-legend text
+keyphrase --color-legend ansi
+keyphrase --color-legend html
+
+# Preview with your tweaks
+keyphrase --color-legend ansi \
+  --color-map approach:#ffcc00ff \
+  --color-map experiment:#44cc99ff
 ```
 
-You can combine this with `--color-map` to preview your custom color settings:
+### Performance & limits
 
-```bash
-keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff
+* `--buffer-size N` (default: 3000 chars):
+  sentences are batched until the character budget is reached, then sent to the LLM.
+* `--max-sentence-length N` (default: 120):
+  very long sentences are truncated for analysis speed.
+* `--timeout SEC` (default: 300):
+  increase if your model is slow/timeouts occur.
+
+### Verbosity
+
+* `-q, --quiet` : suppress non-error output.
+* `--debug` : detailed debug logs; shows warnings and refine fallbacks.
+* `-v, --verbose` : progress bars (this is the default unless `--quiet`/`--debug`).
+
+## CLI reference
+
+```
+keyphrase INPUT
+  [--llm-backend {harmony,ollama}]
+  [-m MODEL]
+  [--ollama-base-url URL]
+  [--skim]
+  [--buffer-size N]
+  [--max-sentence-length N]
+  [--timeout SEC]
+  [-o OUTPUT | -O]
+  [--overwrite]
+  [--color-map name:#RRGGBBAA]...
+  [--color-legend [text|ansi|html]]
+  [-q | --debug | -v]
 ```
 
-* **ANSI output** uses a background color block and black text for visibility (works best in 24-bit color terminals).
-* **HTML output** can be copy-pasted into documentation.
+**Notes**
 
 ### Skim mode (experimental)
 
@@ -152,7 +234,7 @@ keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100
 
 ## Requirements
 
-* Python 3.10 or newer
+* Python 3.10+
 * [Ollama](https://ollama.com/) running locally
 * gpt-oss:20b model installed in Ollama (`ollama pull gpt-oss:20b`)
 
@@ -160,8 +242,12 @@ keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100
 
 MIT
 
-## Notes
+## Privacy
 
-* No data is sent to any third-party APIs: all processing is local via Ollama.
-* For best results on scientific papers, use high-quality, clean PDF or Markdown sources.
-* Markdown output uses HTML `<span style="background-color:...">...</span>` for color highlights.
+All LLM inference is performed **locally** via your Ollama server. No content is sent to third-party APIs.
+
+## Tips
+
+* For dense scientific PDFs, higher `--buffer-size` can reduce LLM round-trips.
+* If you only need a quick gist, `--skim` often produces a compact set of highlights.
+* `--color-legend html` is convenient for pasting into docs/wiki pages.
