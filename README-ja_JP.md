@@ -1,6 +1,6 @@
 # Keyphrase
 
-**Keyphrase** は、PDFやMarkdownファイルから、LLM（大規模言語モデル）を用いて重要文を自動検出し、カテゴリごとに色分けハイライトを付けるコマンドラインツールです。
+**keyphrase**は、PDFやMarkdownファイルから、LLM（大規模言語モデル）を用いてキーフレーズや重要文を自動検出し、色分けハイライト付きで注釈を行うコマンドラインツールです。
 学術論文や技術文書など、主要なポイントを一目で把握したい場面に最適です。
 
 **出力例**
@@ -8,31 +8,18 @@
 * [docs/icpc-2022-zhu-annotated.pdf](docs/icpc-2022-zhu-annotated.pdf)（英文）
 * [docs/kbse-202405-kamiya-annotated.pdf](docs/kbse-202405-kamiya-annotated.pdf)（日本語）
 
-## 新機能
-
-* **二段階抽出（refine付き）**：
-  1回目の結果をJSONとして取得し、2回目でその結果を踏まえて修正・洗練します（重複除去や誤分類修正、要点の絞り込み）。もし検証に失敗した場合は1回目の結果にフォールバックします。
-* **2種類のバックエンド**：
-
-  * `harmony`（デフォルト）：Harmony形式のプロンプト＋厳密なJSONバリデーション（Pydantic）
-  * `ollama`：OllamaネイティブのJSONモード
-* **カラー凡例出力**： `--color-legend [text|ansi|html]` で凡例を表示して終了。色調整の確認に便利です。
-* **Markdown安全チェック**：base64埋め込み画像を含むMarkdownはサポート外とし、明示的にエラーを返します。
-
 ## 特徴
 
-* **PDF** および **Markdown** (`.md`) ファイルに対応
-* LLMによる自動判別と色分けハイライト（デフォルト設定）:
+* **PDF**および**Markdown**（`.md`）ファイルに対応
+* AI（LLM）による自動判別と色分けハイライト
 
-  * <span style="display:inline-block;width:40px;height:20px;background:#8edefbb0;"></span> **提案手法・主要アイデア**（青）
-  * <span style="display:inline-block;width:40px;height:20px;background:#d0fbb1b0;"></span> **実験・評価結果**（緑）
-  * <span style="display:inline-block;width:40px;height:20px;background:#fec6afb0;"></span> **妥当性の脅威**（ピンク）
-* **スキムモード**（--skim）：サーベイ論文などに有効。カテゴリ分けせず重要文のみを単色で強調
-* **カテゴリごとの色指定**が可能
-* **自動出力ファイル名生成**（既存ファイルは保護）
-* **ローカル処理のみ**：Ollamaサーバーを利用（外部送信なし）
-
-> 補足：モデルは `reference`（引用的な文脈文）も推定しますが、これはハイライトには使われず、抽出精度向上のために内部利用されます。
+  * <span style="display:inline-block;width:40px;height:20px;background:#8edefbb0;"></span> **提案手法・主要アイデア**（青）：論文の新規性や主要な貢献
+  * <span style="display:inline-block;width:40px;height:20px;background:#d0fbb1b0;"></span> **実験・評価結果**（緑）：主要な観察結果や実験的成果
+  * <span style="display:inline-block;width:40px;height:20px;background:#fec6afb0;"></span> **妥当性の脅威**（ピンク）：弱点や潜在的な問題点
+* 色分けハイライト付きの新規ファイルを自動生成
+* 出力ファイル名の柔軟な指定や既存ファイルの上書き防止
+* すべてローカルで推論（Ollamaを使用）
+* **カテゴリごとにハイライト色をカスタマイズ可能**
 
 ## インストール
 
@@ -51,99 +38,90 @@ python -m pipx ensurepath
 
 ### 2. Ollamaの導入
 
-Keyphrase はローカルの Ollama サーバーを利用します。
-[公式サイト](https://ollama.com/download) の案内に従ってインストールしてください。
+keyphraseはローカル推論のため[Ollama](https://ollama.com/)を利用します。
+公式サイトの[ダウンロードページ](https://ollama.com/download)に従いセットアップしてください。
 
-### 3. モデルの取得
+### 3. gpt-ossモデルのインストール
 
-デフォルトは `gpt-oss:20b` を利用します：
+Ollamaで次のコマンドを実行し、必要なモデルを取得してください：
 
 ```bash
 ollama pull gpt-oss:20b
 ```
 
-他のモデルを指定する場合は `-m` オプションを使用します。
-
 ## 使い方
 
-### 基本例
+### 基本的な使い方
 
-#### PDF
+PDFの場合：
 
 ```bash
 keyphrase input.pdf
 ```
 
-* `input.pdf` を注釈し、`out.pdf` を出力（既存ファイルがある場合はエラー）
+* `input.pdf` を注釈し、`out.pdf`（未作成なら）として出力します。
 
-#### Markdown
+Markdownの場合：
 
 ```bash
 keyphrase input.md
 ```
 
-* `input.md` を注釈し、`out.md` として `<span style="background-color:...">...</span>` を挿入
-* `-o -` で標準出力へ出力可能（PDFは非対応）
-
-### バックエンドとモデル指定
-
-* `--llm-backend {harmony,ollama}` （デフォルト：`harmony`）
-* `-m MODEL`（デフォルト：`gpt-oss:20b`）
-* `--ollama-base-url URL`（デフォルト：`http://localhost:11434`）
-
-```bash
-# Harmonyバックエンド（デフォルト）
-keyphrase paper.pdf --llm-backend harmony -m gpt-oss:20b
-
-# OllamaネイティブJSONバックエンド
-keyphrase notes.md --llm-backend ollama -m gpt-oss:20b -o highlights.md
-```
+* `input.md` を注釈し、`out.md` として HTML の `<span>` タグでハイライトを付けて出力します。
 
 ### 出力オプション
 
-* `-o OUTPUT`, `--output OUTPUT`：出力ファイル指定
-  `-o -` は **Markdownのみ** 標準出力へ
-* `-O`, `--output-auto`： `INPUT-annotated.pdf` / `INPUT-annotated.md` として出力
-* デフォルト： `out.pdf` / `out.md`
-* `--overwrite`：既存ファイルを上書き
+* `-o OUTPUT`, `--output OUTPUT`：出力ファイル名を指定
+  `-o -` を指定すると標準出力へ出力（Markdownのみ対応）
 
-### 色指定オプション
+* `-O`, `--output-auto`：`INPUT-annotated.pdf` または `INPUT-annotated.md` として自動命名
 
-* `--color-map name:#RRGGBBAA` 形式で指定（複数回可）
-* カテゴリ：`approach`, `experiment`, `threat`
-* 無効化：`name:0`
+* デフォルトは `out.pdf` または `out.md`
+  同名ファイルがすでに存在する場合、`--overwrite` がないとエラーになります。
 
-**例**
+* `--overwrite`：出力ファイルが既に存在していても上書きします。
+
+### 色に関するオプション
+
+カテゴリごとのハイライト色は自由にカスタマイズ可能で、プレビューも行えます。
+
+#### ハイライト色のカスタマイズ
+
+* `--color-map` オプションで各カテゴリに色を割り当てます。
+* **形式**：`name:#rgba` または `name:#rrrggbbaa`（例：`approach:#8edefbb0`）
+* **指定可能なカテゴリ名**：`approach`, `experiment`, `threat`
+* 特定のマーカーを無効化するには `name:0` を指定（例：`threat:0`）
+* このオプションは複数回指定できます。
+
+**使用例：**
 
 ```bash
-keyphrase input.pdf \
-  --color-map approach:#ffcc00ff \
-  --color-map experiment:#44cc99ff \
-  --color-map threat:0
+# approach を黄色に、experiment をティールに、threat を無効化
+keyphrase input.pdf --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff --color-map threat:0
 ```
 
-#### 色の凡例表示
+#### 色の凡例（レジェンド）表示
+
+現在有効な色の設定をターミナルで確認できます。
 
 ```bash
-keyphrase --color-legend           # デフォルトは ansi
-keyphrase --color-legend text
-keyphrase --color-legend ansi
-keyphrase --color-legend html
+keyphrase --color-legend text   # プレーンテキストで表示
+keyphrase --color-legend ansi   # ANSIカラーで背景＋黒文字表示（24ビット端末推奨）
+keyphrase --color-legend html   # HTMLテーブル形式で表示（ドキュメント貼り付け用）
 ```
 
-カスタム指定のプレビューも可能：
+`--color-map` と組み合わせてカスタム設定のプレビューが可能です：
 
 ```bash
 keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experiment:#44cc99ff
 ```
 
-### パフォーマンス調整
+### スキムモード（要点抽出； 実験中）
 
-* `--buffer-size N`（デフォルト 3000文字）：このサイズを超えたらLLMにバッチ送信
-* `--max-sentence-length N`（デフォルト 120）：長い文は解析対象外に
-* `--timeout 秒数`（デフォルト 300）：遅いモデルの場合は延長推奨
+* `--skim`：サーベイ論文など、問題→手法→実験という典型的な構成でないペーパー向けの簡易強調モード。
+  文をカテゴリ別に色分けせず、重要な文のみを単色でハイライトします。
 
-### ログ・詳細表示
+### ログ・詳細表示に関するオプション
 
 * `-q`, `--quiet`：すべての出力や進捗表示を抑制します
 * `--debug`：デバッグ出力を有効に（プロンプトやレスポンス表示、進捗バーも含む）
@@ -152,17 +130,18 @@ keyphrase --color-legend ansi --color-map approach:#ffcc00ff --color-map experim
 ### モデル・バッチ処理オプション
 
 * `-m MODEL`, `--model MODEL`：使用する Ollama モデル（デフォルト：`gpt-oss:20b`）
-* `--max-sentence-length N`：解析対象となる1文あたりの最大文字数（デフォルト：120）
-* `--buffer-size N`：バッチ処理時の最大文字数（デフォルト：3000）
-* `--timeout N`：LLMのレスポンスのタイムアウトの秒数（デフォルト：300）。タイムアウトが頻繁に起きるようなら大きくしてください
+* `--max-sentence-length N`：解析対象となる1文あたりの最大文字数（デフォルト：80）
+* `--buffer-size N`：バッチ処理時の最大文字数（デフォルト：2000）
 
 ### 使用例
 
 ```bash
 keyphrase paper.pdf -O
-# → paper-annotated.pdf を出力
+# → paper.pdf を注釈し、paper-annotated.pdf として出力
 
 keyphrase notes.md -o highlights.md --buffer-size 5000 --max-sentence-length 100 --verbose
+# → notes.md を highlights.md として出力し、
+# バッファを5000文字、最大文長100に設定、進捗表示付きで処理
 ```
 
 ## 必要要件
@@ -177,7 +156,6 @@ MIT
 
 ## 注意事項
 
-* 外部API等への送信は一切なく、すべてローカルOllamaで処理されます。
-* 学術論文の場合は、できるだけレイアウトが整った高品質なPDF/Markdownをご利用ください。
-* Markdown出力は `<span style="background-color:...">...</span>` で装飾されます。
-* Markdownに **base64埋め込み画像** (`data:image/...`) が含まれる場合はサポート外です。
+* 本ツールは外部API等へのデータ送信を一切行わず、すべてローカルOllamaで処理されます。
+* 学術論文等では、できるだけレイアウトが整った高品質なPDFやMarkdownをご利用ください。
+* Markdown出力では、各文が`<span style="background-color:...">...</span>`で色付けされます。
