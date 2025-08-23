@@ -24,10 +24,8 @@ dependencies = [
   "torch>=2.2",
   "numpy>=1.26",
   "pymupdf>=1.24",
-  "ollama",
+  "ollama>=0.5.1",
   "tqdm",
-  "requests",
-  "openai-harmony",
 ]
 
 [tool.hatch.version]
